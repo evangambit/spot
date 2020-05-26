@@ -97,7 +97,7 @@ class Index:
 	def encode_page_header(self, page_length, next_page):
 		return encode_int(page_length) + ' ' + encode_int(next_page) + '\n'
 
-	def iter_for_token(self, token):
+	def documents_with_token(self, token):
 		token = hashfn(token)
 		bucket_id = str(token % self.header['num_buckets'])
 		if bucket_id not in self.header['buckets']:

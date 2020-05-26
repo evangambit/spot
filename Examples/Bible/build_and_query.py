@@ -47,7 +47,7 @@ if __name__ == '__main__':
 
 	# Query for verses that contain the word "beasts"
 	start_time = time.time()
-	results = list(index.iter_for_token('beasts'))
+	results = list(index.documents_with_token('beasts'))
 	end_time = time.time()
 
 	print('Index queried in %.4f seconds' % (end_time - start_time))
