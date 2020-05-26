@@ -69,5 +69,7 @@ The types of nodes currently supported are
 
 3. You are encouraged to tack on additional sorting/filtering with your own code. Spot is intended to be used to quickly get a list of initial candidates, but its implementation necessarily imposes restrictions on the types of queries you can make.  If complete accuracy is required, you're also recommended to verify the correctness of Spot's results (due to the 64-bit hashing limitation).
 
+4. Insertion is O(lg(n)).  Retrieval generally runs in time proportional to the output, but in cases where a rare tokens and a common token hash to the same bucket, retrieval can be comparatively slow.
 
+5. While insertion should always be quite fast, no thought was put into keeping ongoing queries accurate while insertions occur.  In general you should not be making insertions into a database that is currently serving requests.  This is great for personal projects (where you can regularly bring the server down, update it, and push it back up, or where it is cheap to keep duplicates of the index) but may be a non-starter otherwise.
 

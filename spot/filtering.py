@@ -1,12 +1,25 @@
 import json
 
-kFirstVal = ''
-kLastVal = '~~~~'
+def retrieve(expression, max_results=float('inf')):
+	if type(expression) is str:
+		expression = Expression.decode(expression)
+
+	r = []
+	expression.step()
+	while expression.currentValue != Expression.kLastVal:
+		r.append(expression.currentValue)
+		if len(r) >= max_results:
+			break
+		expression.step()
+	if expression.currentValue == Expression.kLastVal:
+		return r, None
+	return r, expression.encode()
+
 
 class Expression:
 	def __init__(self):
 		# Before 'next' is called, this should be kFirstVal
-		self.currentValue = kFirstVal
+		self.currentValue = Expression.kFirstVal
 
 	# Fetch the next value that satisfies the expression.
 	def step(self):
@@ -28,6 +41,9 @@ class Expression:
 		Expression.registry[string] = cls
 Expression.registry = {}
 
+Expression.kFirstVal = (-0x8000000000000000, None)
+Expression.kLastVal = ( 0x7fffffffffffffff, None)
+
 class ListINode(Expression):
 	def __init__(self, vals, index=-1):
 		super().__init__()
@@ -39,7 +55,7 @@ class ListINode(Expression):
 		if self.idx < len(self.vals):
 			self.currentValue = self.vals[self.idx]
 		else:
-			self.currentValue = kLastVal
+			self.currentValue = Expression.kLastVal
 		return self.currentValue
 
 	def encode(self):
@@ -66,11 +82,11 @@ class FileINode(Expression):
 		if self.file is None:
 			self.file = open(self.path, 'r')
 			self.file.read(self.offset * 16)
-		if self.currentValue != kLastVal:
+		if self.currentValue != Expression.kLastVal:
 			row = self.file.read(16); self.offset += 1
 			if len(row) == 0:
 				self.file.close()
-				self.currentValue = kLastVal
+				self.currentValue = Expression.kLastVal
 			else:
 				self.currentValue = row
 		return self.currentValue

@@ -1,8 +1,15 @@
-import math, os, re, shutil, sys, time
+"""
+An example that creates an index that contains every verse in
+the Bible.
 
+390k words are inserted at around 100k words/second (on my
+solid-state laptop).  The index's disk usage is 22MB.
+"""
+
+import os, re, shutil, time
 pjoin = os.path.join
 
-from spot.retrieval import Index
+import spot
 
 stopwords = ['the', 'a', 'an']
 def get_tokens(verse):
@@ -29,7 +36,7 @@ if __name__ == '__main__':
 	start_time = time.time()
 
 	# Create index.
-	index = Index(index_directory)
+	index = spot.Index(index_directory)
 
 	# Insert every word from every verse into the index.
 	for i, verse in enumerate(verses):
@@ -40,17 +47,22 @@ if __name__ == '__main__':
 	end_time = time.time()
 
 	print('Index constructed in %.2f seconds' % (end_time - start_time))
+	print('Inserted %i token-verse pairs and %i verses' % (index.num_insertions(), len(verses)))
 
 	# Load index from disk.
 	index = None
-	index = Index(index_directory)
+	index = spot.Index(index_directory)
 
-	# Query for verses that contain the word "beasts"
 	start_time = time.time()
-	results = list(index.documents_with_token('beasts'))
+	# Query for verses that contain the word "beasts" and the word "clean"
+	fetcher = spot.And(
+		index.documents_with_token('clean'),
+		index.documents_with_token('beasts')
+	)
+	results, _ = spot.retrieve(fetcher)
 	end_time = time.time()
 
-	print('Index queried in %.4f seconds' % (end_time - start_time))
+	print(f"Query completed in %.4f seconds" % (end_time - start_time))
 	print(f"{len(results)} results found!")
 
 	for i, (score, docid) in enumerate(results):

@@ -1,9 +1,4 @@
-"""
-The index consists of two files: a JSON header and file that
-contains linked lists of pages.
-"""
-
-import bisect, hashlib, json, os, resource, shutil
+import bisect, hashlib, json, os, random, resource, shutil
 pjoin = os.path.join
 
 def pad(t, n, c=' '):
@@ -33,6 +28,9 @@ kMaxValue = 64**kValueLength
 kMaxDocid = 64**kDocidLength
 kMaxDisambiguator = 64**kDisambiguatorLength
 
+# The bigger this is, the faster index construction is.
+kMaxPagesInMemory = 8000  # ~32 MB
+
 _base64 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz{|'
 
 # Converts an int to a 7-character string
@@ -53,13 +51,99 @@ assert decode_int(encode_int(10)) == 10
 assert decode_int(encode_int(100)) == 100
 assert decode_int(encode_int(1000)) == 1000
 
+try:
+  from .filtering import Expression
+except(ImportError):
+  from filtering import Expression
+
+
+def decode_line(line):
+	value = decode_int(line[:kValueLength])
+	docid = decode_int(line[kValueLength:kValueLength+kDocidLength])
+	disambiguator = decode_int(line[-kDisambiguatorLength:])
+	return value, docid, disambiguator
+
+class TokenINode(Expression):
+	def __init__(self, index, offsets, disambiguator, page_idx=0, line_idx=-1):
+		super().__init__()
+		self.index = index
+		self.offsets = offsets
+		self.disambiguator = disambiguator
+
+		self.page_idx = page_idx
+		self.page = self.index.fetch_page(self.offsets[self.page_idx])
+		self.line_idx = line_idx
+
+	def _is_valid(self, line):
+		return line[-1:] == self.disambiguator
+
+	def step(self):
+		if self.currentValue == Expression.kLastVal:
+			return self.currentValue
+		while True:
+			if self.line_idx + 1 < len(self.page.lines):
+				self.line_idx += 1
+				if self._is_valid(self.page.lines[self.line_idx]):
+					self.currentValue = decode_line(self.page.lines[self.line_idx])[:-1]
+					return self.currentValue
+				continue
+
+			if self.page_idx == len(self.offsets) - 1:
+				self.currentValue = Expression.kLastVal
+				return self.currentValue
+
+			self.page_idx += 1
+			self.line_idx = -1
+			self.page = self.index.fetch_page(self.offsets[self.page_idx])
+
+	def encode(self):
+		return json.dumps({
+			'index_id': self.index.id,
+			'offsets': self.offsets,
+			'disambiguator': self.disambiguator,
+			'page_idx': self.page_idx,
+			'line_idx': self.line_idx,
+			'type': 'TokenINode'
+		})
+
+	@staticmethod
+	def decode(J):
+		return TokenINode(
+			index = indices[J['index_id']],
+			offsets = J['offsets'],
+			disambiguator = J['disambiguator'],
+			page_idx = J['page_idx'],
+			line_idx = J['line_idx']
+		)
+Expression.register('TokenINode', TokenINode)
+
+
+# A mapping from index IDs to indices.
+indices = {}
+
+"""
+TODO
+
+Let's be a little smarter with how in-memory pages work.  For
+instance right now we just give pages to TokenINode and pray
+that the offsets/page-splitting works.
+
+We need to guarantee that every page on disk exists in exactly
+on place in memory, that all pages are written when the index
+is saved, and that when pages are split we don't break querying.
+"""
 class Index:
 	def __init__(self, path):
+		self.id = Index.id
+		Index.id += 1
+		indices[self.id] = self
+
 		if not os.path.exists(path):
 			os.mkdir(path)
 			with open(pjoin(path, 'header.json'), 'w+') as f:
 				json.dump({
 					"num_buckets": 4096,
+					"num_insertions": 0,
 					"buckets": {}
 				}, f, indent=1)
 			with open(pjoin(path, 'body.txt'), 'w+') as f:
@@ -72,30 +156,26 @@ class Index:
 
 		self.bodysize = os.path.getsize(self.body.name)
 
-		self.modified_pages = {}
+		self.pages_in_memory = {}
 
-	def newpage(self):
+	def _add_page_to_memory(self, offset, page):
+		if len(self.pages_in_memory) >= kMaxPagesInMemory:
+			# TODO: right now we assume the pages in memory used
+			# during retrieval won't ever trigger a page deletion.
+			# It's unclear what would happen during retrieval if a
+			# page was deleted... I should think about this.
+			key = random.choice(list(self.pages_in_memory.keys()))
+			self.pages_in_memory[key].save(self.body)
+			del self.pages_in_memory[key]
+		self.pages_in_memory[offset] = page
+
+	def _newpage(self):
 		self.body.seek(self.bodysize)
 		self.body.write('x' * kPageSize)
 		page = Page('', self.bodysize)
-		self.modified_pages[self.bodysize] = page
+		self._add_page_to_memory(self.bodysize, page)
 		self.bodysize += kPageSize
 		return page
-
-	def decode_line(self, line):
-		value = decode_int(line[:kValueLength])
-		docid = decode_int(line[kValueLength:kValueLength+kDocidLength])
-		disambiguator = decode_int(line[-kDisambiguatorLength:])
-		return value, docid, disambiguator
-
-	def decode_page_header(self, line):
-		assert line[-1] == '\n'
-		page_length = decode_int(line[0:7])
-		next_page = decode_int(line[8:15])
-		return page_length, next_page
-
-	def encode_page_header(self, page_length, next_page):
-		return encode_int(page_length) + ' ' + encode_int(next_page) + '\n'
 
 	def documents_with_token(self, token):
 		token = hashfn(token)
@@ -107,24 +187,26 @@ class Index:
 			return
 		disambiguator = encode_int(bucket['tokens'].index(token))[-kDisambiguatorLength:]
 		offsets = bucket['page_offsets']
-		for offset in offsets:
-			self.body.seek(offset)
-			page = Page(self.body.read(kPageSize), offset)
-			for line in page.lines:
-				if line[-1:] == disambiguator:
-					value, docid, _ = self.decode_line(line)
-					yield value, docid
+		return TokenINode(self, offsets, disambiguator)
+
+	def fetch_page(self, offset):
+		self.body.seek(offset)
+		return Page(self.body.read(kPageSize), offset)
 
 	def save(self):
-		for page in self.modified_pages.values():
+		for page in self.pages_in_memory.values():
 			page.save(self.body)
-		self.modified_pages = {}
+		self.pages_in_memory = {}
 		self.body.flush()
 
 		with open(pjoin(self.path, 'header.json'), 'w') as f:
 			json.dump(self.header, f, indent=1)
 
+	def num_insertions(self):
+		return self.header['num_insertions']
+
 	def add(self, token, docid, value):
+		self.header['num_insertions'] += 1
 		token = hashfn(token)
 		# JSON doesn't like integer keys in their maps, so our bucket_ids are strings :/
 		bucket_id = str(token % self.header['num_buckets'])
@@ -133,7 +215,7 @@ class Index:
 				'tokens': [],
 
 				# Offset (in bytes) from beginning of file.
-				'page_offsets': [self.newpage().offset],
+				'page_offsets': [self._newpage().offset],
 
 				# The value of first element of page.
 				# Since the page is currently empty we make this ' '.
@@ -157,19 +239,19 @@ class Index:
 		page_idx = bisect.bisect(bucket['page_values'], line) - 1
 		offset = bucket['page_offsets'][page_idx]
 
-		if offset in self.modified_pages:
-			page = self.modified_pages[offset]
+		if offset in self.pages_in_memory:
+			page = self.pages_in_memory[offset]
 		else:
 			# Read page into RAM
 			self.body.seek(offset)
 			page = Page(self.body.read(kPageSize), offset)
-			self.modified_pages[offset] = page
+			self._add_page_to_memory(offset, page)
 
 		# Split page if it is full
 		if (len(page.lines) + 1) * kLineLength + kPageHeaderSize > kPageSize:
 			loc1 = offset
 
-			page2 = self.newpage()
+			page2 = self._newpage()
 
 			n = len(page.lines)
 			left = page.lines[:n//2]
@@ -184,8 +266,13 @@ class Index:
 			bucket['page_offsets'] = bucket['page_offsets'][:page_idx+1] + [page2.offset] + bucket['page_offsets'][page_idx+1:]
 			bucket['page_values'] = bucket['page_values'][:page_idx+1] + [page2.lines[0]] + bucket['page_values'][page_idx+1:]
 
+			page.is_modified = True
+			page2.is_modified = True
+
 		# Insert new entry, and then write the page to disk.
-		bisect.insort(page.lines, line)
+		page.add_line(line)
+
+Index.id = 0
 
 """
 The fact that a Page object exists means it has been allocated.
@@ -203,12 +290,20 @@ class Page:
 		if '~' in self.lines[-1] or len(self.lines) == 0:
 			self.lines.pop()
 		assert kLineLength * len(self.lines) == length, f'Expected {kLineLength} * {len(self.lines)} == {length}'
+		self.offset = offset
+		self.is_modified = False
 
 	def save(self, file):
-		file.seek(self.offset)
-		file.write(self.encode())
+		if self.is_modified:
+			file.seek(self.offset)
+			file.write(self._encode())
+		self.is_modified = False
 
-	def encode(self):
+	def add_line(self, line):
+		bisect.insort(self.lines, line)
+		self.is_modified = True
+
+	def _encode(self):
 		length = len(self.lines) * kLineLength
 		header = encode_int(length) + ' ' + encode_int(self.next_page) + '\n'
 		body = '\n'.join(self.lines) + '\n'
