@@ -6,7 +6,7 @@ $ python setup.py install; python Tests/node_test.py
 
 import unittest
 
-from spot import Expression, ListINode, And, Or, kFirstVal, kLastVal
+from spot.filtering import *
 
 class AndTest(unittest.TestCase):
   def identity_test1(self):

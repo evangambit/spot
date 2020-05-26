@@ -2,7 +2,7 @@ import math, os, re, shutil, sys, time
 
 pjoin = os.path.join
 
-from spot import Index
+from spot.retrieval import Index
 
 stopwords = ['the', 'a', 'an']
 def get_tokens(verse):
