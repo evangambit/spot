@@ -28,9 +28,6 @@ kMaxValue = 64**kValueLength
 kMaxDocid = 64**kDocidLength
 kMaxDisambiguator = 64**kDisambiguatorLength
 
-# The bigger this is, the faster index construction is.
-kMaxPagesInMemory = 8000  # ~32 MB
-
 _base64 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz{|'
 
 # Converts an int to a 7-character string
@@ -176,9 +173,6 @@ class Index:
 
 		self.pageManager = PageManager(self, self.body, self.header['bodysize'])
 
-	def _add_page_to_memory(self, offset, page):
-		self.pageManager._add_page_to_memory(offset, page)
-
 	def documents_with_token(self, token):
 		token = hashfn(token)
 		bucket_id = str(token % self.header['num_buckets'])
@@ -284,11 +278,10 @@ class PageManager:
 			page = self.pages_in_memory[offset]
 		else:
 			# Read page into RAM
-			self.file.seek(file)
-			page = Page(self.body.read(kPageSize), offset)
+			self.file.seek(offset)
+			page = Page(self.file.read(kPageSize), offset)
 			self._add_page_to_memory(offset, page)
 		return page
-
 
 	def allocate(self):
 		offset = self.index.pageManager.filesize
@@ -297,7 +290,7 @@ class PageManager:
 
 		self.index.body.seek(offset)
 		self.index.body.write(page._encode())
-		self.index._add_page_to_memory(self.index.pageManager.filesize, page)
+		self._add_page_to_memory(self.index.pageManager.filesize, page)
 		self.index.pageManager.filesize += kPageSize
 		return page
 
@@ -308,7 +301,7 @@ class PageManager:
 	def _add_page_to_memory(self, offset, page):
 		if len(self.pages_in_memory) >= kMaxPagesInMemory:
 			key = random.choice(list(self.pages_in_memory.keys()))
-			self.pages_in_memory[key].save(self.body)
+			self.pages_in_memory[key].save(self.file)
 			del self.pages_in_memory[key]
 		self.pages_in_memory[offset] = page
 
@@ -317,6 +310,8 @@ class PageManager:
 			page.save(self.file)
 		self.pages_in_memory = {}
 
+# The bigger this is, the faster index construction is.
+kMaxPagesInMemory = 8000  # ~32 MB
 
 """
 Invariant: if a 'Page' object eixsts, it has been allocated.
