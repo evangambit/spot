@@ -132,6 +132,22 @@ We need to guarantee that every page on disk exists in exactly
 on place in memory, that all pages are written when the index
 is saved, and that when pages are split we don't break querying.
 """
+"""
+An index consists of a 'header' json and a large 'body' file.
+
+The 'body' file consists of a set of pages which represent nodes
+in thousands of linked lists.  Tokens are hashed and inserted
+into one of these linked lists.
+
+Insertion into a sorted linked list is typically O(n).  Spot gets
+around this by containing the locations of each node of the
+linked list in a sorted list of integers.  We perform binary
+search to find which page to add a document to, read the entire
+page from memory, insert our document, then write the page back.
+
+
+
+"""
 class Index:
 	def __init__(self, path):
 		self.id = Index.id
@@ -144,6 +160,10 @@ class Index:
 				json.dump({
 					"num_buckets": 4096,
 					"num_insertions": 0,
+					# Calling os.path.getsize leads to bugs where we've expanded
+					# the file but the file hasn't been flushed.  So instead we
+					# keep track of 'bodysize' manually.
+					"bodysize": 0,
 					"buckets": {}
 				}, f, indent=1)
 			with open(pjoin(path, 'body.txt'), 'w+') as f:
@@ -154,28 +174,10 @@ class Index:
 			self.header = json.load(f)
 		self.body = open(pjoin(path, 'body.txt'), 'r+')
 
-		self.bodysize = os.path.getsize(self.body.name)
-
-		self.pages_in_memory = {}
+		self.pageManager = PageManager(self, self.body, self.header['bodysize'])
 
 	def _add_page_to_memory(self, offset, page):
-		if len(self.pages_in_memory) >= kMaxPagesInMemory:
-			# TODO: right now we assume the pages in memory used
-			# during retrieval won't ever trigger a page deletion.
-			# It's unclear what would happen during retrieval if a
-			# page was deleted... I should think about this.
-			key = random.choice(list(self.pages_in_memory.keys()))
-			self.pages_in_memory[key].save(self.body)
-			del self.pages_in_memory[key]
-		self.pages_in_memory[offset] = page
-
-	def _newpage(self):
-		self.body.seek(self.bodysize)
-		self.body.write('x' * kPageSize)
-		page = Page('', self.bodysize)
-		self._add_page_to_memory(self.bodysize, page)
-		self.bodysize += kPageSize
-		return page
+		self.pageManager._add_page_to_memory(offset, page)
 
 	def documents_with_token(self, token):
 		token = hashfn(token)
@@ -190,15 +192,13 @@ class Index:
 		return TokenINode(self, offsets, disambiguator)
 
 	def fetch_page(self, offset):
-		self.body.seek(offset)
-		return Page(self.body.read(kPageSize), offset)
+		return self.pageManager.fetch_page(offset)
 
 	def save(self):
-		for page in self.pages_in_memory.values():
-			page.save(self.body)
-		self.pages_in_memory = {}
+		self.pageManager.save()
 		self.body.flush()
 
+		self.header['bodysize'] = self.pageManager.filesize
 		with open(pjoin(self.path, 'header.json'), 'w') as f:
 			json.dump(self.header, f, indent=1)
 
@@ -215,7 +215,7 @@ class Index:
 				'tokens': [],
 
 				# Offset (in bytes) from beginning of file.
-				'page_offsets': [self._newpage().offset],
+				'page_offsets': [self.pageManager.allocate().offset],
 
 				# The value of first element of page.
 				# Since the page is currently empty we make this ' '.
@@ -239,19 +239,13 @@ class Index:
 		page_idx = bisect.bisect(bucket['page_values'], line) - 1
 		offset = bucket['page_offsets'][page_idx]
 
-		if offset in self.pages_in_memory:
-			page = self.pages_in_memory[offset]
-		else:
-			# Read page into RAM
-			self.body.seek(offset)
-			page = Page(self.body.read(kPageSize), offset)
-			self._add_page_to_memory(offset, page)
+		page = self.pageManager.fetch_page2(offset)
 
 		# Split page if it is full
 		if (len(page.lines) + 1) * kLineLength + kPageHeaderSize > kPageSize:
 			loc1 = offset
 
-			page2 = self._newpage()
+			page2 = self.pageManager.allocate()
 
 			n = len(page.lines)
 			left = page.lines[:n//2]
@@ -274,8 +268,58 @@ class Index:
 
 Index.id = 0
 
+class PageManager:
+	def __init__(self, index, file, filesize):
+		self.index = index
+		self.file = file
+		self.filesize = filesize
+		self.pages_in_memory = {}
+
+	def fetch_page(self, offset):
+		self.file.seek(offset)
+		return Page(self.file.read(kPageSize), offset)
+
+	def fetch_page2(self, offset):
+		if offset in self.pages_in_memory:
+			page = self.pages_in_memory[offset]
+		else:
+			# Read page into RAM
+			self.file.seek(file)
+			page = Page(self.body.read(kPageSize), offset)
+			self._add_page_to_memory(offset, page)
+		return page
+
+
+	def allocate(self):
+		offset = self.index.pageManager.filesize
+		header = encode_int(0) + ' ' + encode_int(0) + '\n'
+		page = Page(header + 'x' * (kPageSize - kPageHeaderSize), offset)
+
+		self.index.body.seek(offset)
+		self.index.body.write(page._encode())
+		self.index._add_page_to_memory(self.index.pageManager.filesize, page)
+		self.index.pageManager.filesize += kPageSize
+		return page
+
+	# TODO: right now we assume the pages in memory used
+	# during retrieval won't ever trigger a page deletion.
+	# It's unclear what would happen during retrieval if a
+	# page was deleted... I should think about this.
+	def _add_page_to_memory(self, offset, page):
+		if len(self.pages_in_memory) >= kMaxPagesInMemory:
+			key = random.choice(list(self.pages_in_memory.keys()))
+			self.pages_in_memory[key].save(self.body)
+			del self.pages_in_memory[key]
+		self.pages_in_memory[offset] = page
+
+	def save(self):
+		for page in self.pages_in_memory.values():
+			page.save(self.file)
+		self.pages_in_memory = {}
+
+
 """
-The fact that a Page object exists means it has been allocated.
+Invariant: if a 'Page' object eixsts, it has been allocated.
 """
 class Page:
 	def __init__(self, text, offset):
@@ -287,7 +331,7 @@ class Page:
 		length = decode_int(text[0:7])
 		self.next_page = decode_int(text[8:15])
 		self.lines = text[16:].split('\n')[:-1]
-		if '~' in self.lines[-1] or len(self.lines) == 0:
+		while len(self.lines) > 0 and ('~' in self.lines[-1] or len(self.lines) == 0):
 			self.lines.pop()
 		assert kLineLength * len(self.lines) == length, f'Expected {kLineLength} * {len(self.lines)} == {length}'
 		self.offset = offset
@@ -300,6 +344,7 @@ class Page:
 		self.is_modified = False
 
 	def add_line(self, line):
+		assert kPageHeaderSize + (len(self.lines) + 1) * kLineLength <= kPageSize
 		bisect.insort(self.lines, line)
 		self.is_modified = True
 
