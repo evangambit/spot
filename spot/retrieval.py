@@ -30,6 +30,12 @@ kMaxDisambiguator = 64**kDisambiguatorLength
 
 _base64 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz{|'
 
+"""
+TODO: while keeping files somewhat readable is nice, expanding
+to use all 256 values in a byte will let us use a wider range of
+values.  This is especially nice for disambiguation.
+"""
+
 # Converts an int to a 7-character string
 def encode_int(x):
 	return _base64[(x >> 36) % 64] + _base64[(x >> 30) % 64] + _base64[(x >> 24) % 64] + _base64[(x >> 18) % 64] + _base64[(x >> 12) % 64] + _base64[(x >> 6) % 64] + _base64[x % 64]
@@ -118,23 +124,19 @@ Expression.register('TokenINode', TokenINode)
 # A mapping from index IDs to indices.
 indices = {}
 
-"""
-TODO
 
-Let's be a little smarter with how in-memory pages work.  For
-instance right now we just give pages to TokenINode and pray
-that the offsets/page-splitting works.
-
-We need to guarantee that every page on disk exists in exactly
-on place in memory, that all pages are written when the index
-is saved, and that when pages are split we don't break querying.
-"""
 """
 An index consists of a 'header' json and a large 'body' file.
 
-The 'body' file consists of a set of pages which represent nodes
-in thousands of linked lists.  Tokens are hashed and inserted
-into one of these linked lists.
+The 'body' file consists of a number of linked-lists, with each
+node (aka "Page") of a linked list containing (typically)
+hundreds of elements.  An "element" is a (value, docid) pair, as
+well as an extra (small) integer that helps disambiguate hash
+collisons.
+
+There are 4096 linked lists in the body, with their nodes
+interweaving with one another.  Each linked list is a union of
+many posting lists.
 
 Insertion into a sorted linked list is typically O(n).  Spot gets
 around this by containing the locations of each node of the
@@ -142,7 +144,17 @@ linked list in a sorted list of integers.  We perform binary
 search to find which page to add a document to, read the entire
 page from memory, insert our document, then write the page back.
 
+Unfortunately every 255 insertions (on average, assuming a page
+size of 4096) we need to insert a new integer into one of these
+arrays, which technically makes insertion linear.  But since
+these arrays are in RAM and are of size n/255, the expected
+run time is quite fast (in some sense "n / 65025").
 
+We use about 0.16 bytes per token-document pair in the header.
+Since the header is stored in RAM, this has some implications
+on the effective size of a Spot index.  For instance, 1 million
+documents with 1K tokens each requires 160MB of RAM for just the
+header (with, ideally, a lot of additional RAM to cache pages).
 
 """
 class Index:
@@ -209,7 +221,7 @@ class Index:
 				'tokens': [],
 
 				# Offset (in bytes) from beginning of file.
-				'page_offsets': [self.pageManager.allocate().offset],
+				'page_offsets': [self.pageManager.allocate_page().offset],
 
 				# The value of first element of page.
 				# Since the page is currently empty we make this ' '.
@@ -233,13 +245,13 @@ class Index:
 		page_idx = bisect.bisect(bucket['page_values'], line) - 1
 		offset = bucket['page_offsets'][page_idx]
 
-		page = self.pageManager.fetch_page2(offset)
+		page = self.pageManager.fetch_page(offset)
 
 		# Split page if it is full
 		if (len(page.lines) + 1) * kLineLength + kPageHeaderSize > kPageSize:
 			loc1 = offset
 
-			page2 = self.pageManager.allocate()
+			page2 = self.pageManager.allocate_page()
 
 			n = len(page.lines)
 			left = page.lines[:n//2]
@@ -262,6 +274,16 @@ class Index:
 
 Index.id = 0
 
+"""
+The PageManager is responsible for allocating new pages and
+fetching existing pages.  It is also responsible for caching
+pages in RAM (see PageManager.kMaxPagesInMemory).
+
+Caching is very primitive right now: when the cache is full, a
+random page is removed from the cache.  This is decent
+asymptotically (common queries will tend to fill the cache) but
+clearly suboptimal.
+"""
 class PageManager:
 	def __init__(self, index, file, filesize):
 		self.index = index
@@ -269,55 +291,60 @@ class PageManager:
 		self.filesize = filesize
 		self.pages_in_memory = {}
 
+	# Read the page into RAM if it isn't cached.  Then return
+	# the page.
 	def fetch_page(self, offset):
-		self.file.seek(offset)
-		return Page(self.file.read(kPageSize), offset)
-
-	def fetch_page2(self, offset):
-		if offset in self.pages_in_memory:
-			page = self.pages_in_memory[offset]
-		else:
-			# Read page into RAM
+		if offset not in self.pages_in_memory:
 			self.file.seek(offset)
-			page = Page(self.file.read(kPageSize), offset)
+			page = Page(self, self.file.read(kPageSize), offset)
 			self._add_page_to_memory(offset, page)
-		return page
+		return self.pages_in_memory[offset]
 
-	def allocate(self):
-		offset = self.index.pageManager.filesize
+	# Allocates a new page on disk.
+	def allocate_page(self):
 		header = encode_int(0) + ' ' + encode_int(0) + '\n'
-		page = Page(header + 'x' * (kPageSize - kPageHeaderSize), offset)
+		page = Page(self, header + 'x' * (kPageSize - kPageHeaderSize), self.filesize)
 
-		self.index.body.seek(offset)
+		self.index.body.seek(self.filesize)
 		self.index.body.write(page._encode())
 		self._add_page_to_memory(self.index.pageManager.filesize, page)
 		self.index.pageManager.filesize += kPageSize
 		return page
 
-	# TODO: right now we assume the pages in memory used
-	# during retrieval won't ever trigger a page deletion.
-	# It's unclear what would happen during retrieval if a
-	# page was deleted... I should think about this.
 	def _add_page_to_memory(self, offset, page):
-		if len(self.pages_in_memory) >= kMaxPagesInMemory:
+		if len(self.pages_in_memory) >= PageManager.kMaxPagesInMemory:
 			key = random.choice(list(self.pages_in_memory.keys()))
-			self.pages_in_memory[key].save(self.file)
+			self.pages_in_memory[key].mark_dead(self.file)
 			del self.pages_in_memory[key]
 		self.pages_in_memory[offset] = page
 
+	# WARNING: It is crucial that pages be saved to disk before
+	# being deleted.
 	def save(self):
 		for page in self.pages_in_memory.values():
 			page.save(self.file)
-		self.pages_in_memory = {}
 
-# The bigger this is, the faster index construction is.
-kMaxPagesInMemory = 8000  # ~32 MB
+# The bigger this is, the faster index construction is.  When
+# testing this should be small (to catch caching errors), but
+# when performance is important it should be large.
+PageManager.kMaxPagesInMemory = 32000  # ~128 MB
 
 """
-Invariant: if a 'Page' object eixsts, it has been allocated.
+Invariant: if a 'Page' object exists, it has been allocated.
+
+A 'Page' object represents a contiguous chunk of disk space in
+the index's "body" file.  It represents a list of documents and
+a pointer to the next Page in the linked list.
+
+The format of the file is:
+- the first 8 bytes is the number of entries in the page
+- the second 8 bytes is the location of the next page
+- every succeeding 16 bytes represents a document
 """
 class Page:
-	def __init__(self, text, offset):
+	def __init__(self, manager, text, offset):
+		self.manager = manager
+		self.is_dead = False
 		if len(text) == 0:
 			self.next_page = 0
 			self.lines = []
@@ -325,18 +352,33 @@ class Page:
 			return
 		length = decode_int(text[0:7])
 		self.next_page = decode_int(text[8:15])
-		self.lines = text[16:].split('\n')[:-1]
-		while len(self.lines) > 0 and ('~' in self.lines[-1] or len(self.lines) == 0):
-			self.lines.pop()
+		self.lines = [text[i:i+kLineLength-1] for i in range(kPageHeaderSize, kPageHeaderSize + length, kLineLength)]
 		assert kLineLength * len(self.lines) == length, f'Expected {kLineLength} * {len(self.lines)} == {length}'
 		self.offset = offset
 		self.is_modified = False
 
+	# Writes this page to disk (if it has been modified).
 	def save(self, file):
 		if self.is_modified:
 			file.seek(self.offset)
 			file.write(self._encode())
 		self.is_modified = False
+
+	# While we can delete pages from cache, we cannot delete
+	# external references to pages these deleted pages.  Instead
+	# we mark these pages as "dead" as an indicator that the page
+	# may no longer be accurate (since a new Page object may have
+	# been created with the same offset).
+	#
+	# Fortunately this fails fairly gracefully, since pages don't
+	# move around, so any page that is pointing to valid next page
+	# will, at worst, skip over some pages accidentally.  If we
+	# ever start moving pages around (e.g. to get better locality
+	# while reading, or if we start supporting deletion) we may
+	# need to revisit how to make Page objects safe.
+	def mark_dead(self, file):
+		self.save()
+		self.is_dead = True
 
 	def add_line(self, line):
 		assert kPageHeaderSize + (len(self.lines) + 1) * kLineLength <= kPageSize
@@ -347,11 +389,6 @@ class Page:
 		length = len(self.lines) * kLineLength
 		header = encode_int(length) + ' ' + encode_int(self.next_page) + '\n'
 		body = '\n'.join(self.lines) + '\n'
-		amount_of_padding = kPageSize - len(header) - len(body)
-		if amount_of_padding > 0:
-			padding = '~' * (amount_of_padding - 1) + '\n'
-		else:
-			padding = ''
-		result = header + body + padding
-		assert len(result) == kPageSize
+		result = header + body
+		result += '~' * (kPageSize - len(result))
 		return result
