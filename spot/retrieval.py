@@ -80,13 +80,13 @@ else:
 	# Converts an int to a 7-character string
 	def encode_int(x):
 		return (
-			  chr((x // (256**6)) % 256)
-			+ chr((x // (256**5)) % 256)
-			+ chr((x // (256**4)) % 256)
-			+ chr((x // (256**3)) % 256)
-			+ chr((x // (256**2)) % 256)
-			+ chr((x // (256**1)) % 256)
-			+ chr((x // (256**0)) % 256)
+			  chr((x >> 48) % 256)
+			+ chr((x >> 40) % 256)
+			+ chr((x >> 32) % 256)
+			+ chr((x >> 24) % 256)
+			+ chr((x >> 16) % 256)
+			+ chr((x >>  8) % 256)
+			+ chr((x >>  0) % 256)
 		)
 
 	# Converts a 7-character string to an int
@@ -101,10 +101,9 @@ else:
 	def decode_line(line):
 		if type(line) is not str:
 			line = line.decode()
-		assert line[-1] == '\n'
 		value = decode_int(line[:7])
 		docid = decode_int(line[7:14])
-		disambiguator = decode_int(line[-2])
+		disambiguator = decode_int(line[-2:])
 		return value, docid, disambiguator
 
 	def encode_line(value, docid, disambiguator):
@@ -113,53 +112,17 @@ else:
 		assert disambiguator < kMaxDisambiguator
 		value = encode_int(value)[-7:]
 		docid = encode_int(docid)[-7:]
-		disambiguator = encode_int(disambiguator)[-1:]
-		line = value + docid + disambiguator + '\n'
+		disambiguator = encode_int(disambiguator)[-2:]
+		line = value + docid + disambiguator
 		assert len(line) == kLineLength
 		return line
-
-	kMaxValue = 256**7
-	kMaxDocid = 256**7
-	kMaxDisambiguator = 256**1
-
-
-	# # Converts an int to a 7-character string
-	# def encode_int(x):
-	# 	return chr(x >> 48) + chr((x >> 40) % 256) + chr((x >> 32) % 256) + chr((x >> 24) % 256) + chr((x >> 16) % 256) + chr((x >> 8) % 256) + chr(x % 256)
-
-	# # Converts a 7-character string to an int
-	# def decode_int(text):
-	# 	r = 0
-	# 	for c in text:
-	# 		r = r * 256 + ord(c)
-	# 	return r
-
-	# def decode_line(line):
-	# 	assert len(line) == kLineLength
-	# 	value = decode_int(line[:7])
-	# 	docid = decode_int(line[7:14])
-	# 	disambiguator = decode_int(line[-2:])
-	# 	assert value < 50000
-	# 	assert docid < 100000
-	# 	return value, docid, disambiguator
-
-	# def encode_line(value, docid, disambiguator):
-	# 	assert value < kMaxValue
-	# 	assert docid < kMaxDocid
-	# 	assert disambiguator < kMaxDisambiguator
-	# 	value = encode_int(value)[-7:]
-	# 	docid = encode_int(docid)[-7:]
-	# 	disambiguator = encode_int(disambiguator)[-2:]
-	# 	line = value + docid + disambiguator
-	# 	assert len(line) == kLineLength
-	# 	return line
 
 	kMaxValue = 256**7
 	kMaxDocid = 256**7
 	kMaxDisambiguator = 256**2
 
 assert decode_int(encode_int(0)) == 0
-assert decode_int(encode_int(10)) == 10, encode_int(10)
+assert decode_int(encode_int(10)) == 10
 assert decode_int(encode_int(100)) == 100
 assert decode_int(encode_int(1000)) == 1000
 assert decode_int(encode_int(10000)) == 10000
@@ -172,10 +135,6 @@ class TokenINode(Expression):
 		self.index = index
 		self.offsets = offsets
 		self.disambiguator = disambiguator
-
-		for o in offsets:
-			assert o % kPageSize == 0
-
 		self.page_idx = page_idx
 		self.page = self.index.fetch_page(self.offsets[self.page_idx])
 		self.line_idx = line_idx
@@ -201,7 +160,7 @@ class TokenINode(Expression):
 			self.page = self.index.fetch_page(self.offsets[self.page_idx])
 
 	def encode(self):
-		return jdumps({
+		return json.dumps({
 			"index_id": self.index.id,
 			"offsets": self.offsets,
 			"disambiguator": self.disambiguator,
@@ -462,22 +421,7 @@ class Page:
 			return
 		length = decode_int(text[0:7])
 		self.next_page = decode_int(text[8:15])
-		assert length <= (kPageSize - kPageHeaderSize), f"{length} >= {kPageSize - kPageHeaderSize}"
-
 		self.lines = [text[i:i+kLineLength] for i in range(kPageHeaderSize, kPageHeaderSize + length, kLineLength)]
-		assert len(self.lines) * kLineLength == length, f"{len(self.lines)} != {length}"
-		for i, line in enumerate(self.lines):
-			assert len(line) == kLineLength
-			assert line != "~~~~~~~~~~~~~~~~"
-			try:
-				decode_line(line)
-			except:
-				# print(i, len(self.lines))
-				# for l in self.lines:
-				# 	print([ord(x) for x in l])
-				# print([ord(x) for x in line])
-				exit(0)
-		assert kLineLength * len(self.lines) == length, f"Expected {kLineLength} * {len(self.lines)} == {length}"
 		self.is_modified = False
 
 	# Writes this page to disk (if it has been modified).
@@ -487,17 +431,6 @@ class Page:
 			file.seek(self.offset)
 			code = self._encode()
 			file.write(code)
-
-			for line in self.lines:
-				decode_line(line)
-
-			p2 = Page(self.manager, code, self.offset)
-			assert len(p2.lines) == len(self.lines)
-			if p2.lines != self.lines:
-				import code; code.interact(local=locals())
-			assert p2.lines == self.lines
-			for line in p2.lines:
-				decode_line(line)
 
 		self.is_modified = False
 
@@ -530,6 +463,5 @@ class Page:
 		assert len(header) == kPageHeaderSize
 		body = "".join(self.lines)
 		result = header + body
-		assert (kPageSize - len(result)) % kLineLength == 0
 		result += '~' * (kPageSize - len(result))
 		return result.encode()
