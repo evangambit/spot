@@ -38,14 +38,21 @@ if __name__ == '__main__':
 	# Create index.
 	index = spot.Index(index_directory)
 
+	words = [
+		'clean', 'beasts', 'multiply', 'commandments', 'laws'
+	]
+	groundtruth = {}
+	for word in words:
+		groundtruth[word] = []
+
 	# Insert every word from every verse into the index.
-	groundtruth = []
 	for i, verse in enumerate(verses):
 		tokens = get_tokens(verse)
-		if 'beasts' in tokens and 'clean' in tokens:
-			groundtruth.append(i)
 		for token in tokens:
 			index.add(token, docid=i, value=len(verse))
+		for word in words:
+			if word in tokens:
+				groundtruth[word].append(i)
 	index.save()
 
 	end_time = time.time()
@@ -57,27 +64,15 @@ if __name__ == '__main__':
 	index = None
 	index = spot.Index(index_directory)
 
-	start_time = time.time()
-	# Query for verses that contain the word "beasts" and the word "clean"
-	fetcher = spot.And(
-		index.documents_with_token('clean'),
-		index.documents_with_token('beasts')
-	)
-	results, _ = spot.retrieve(fetcher, 100)
-	end_time = time.time()
+	for word in words:
+		start_time = time.time()
+		# Query for verses that contain the word "beasts" and the word "clean"
+		fetcher = index.documents_with_token(word)
+		results, _ = spot.retrieve(fetcher, 100)
+		end_time = time.time()
 
-	print(f"Query completed in %.4f seconds" % (end_time - start_time))
-	print(f"{len(results)}/{len(groundtruth)} results found!")
+		print(f"Query for \"{word}\" completed in %.4f seconds" % (end_time - start_time))
+		print(f"{len(results)}/{len(groundtruth[word])} results found!")
 
-	for i, (score, docid) in enumerate(results):
-		assert docid in groundtruth
-		verse = verses[docid]
-		if len(verse) > 100:
-			print(i, docid, verse[:97] + '...')
-		else:
-			print(i, docid, verse)
-
-
-
-
-
+		for i, (score, docid) in enumerate(results):
+			assert docid in groundtruth[word]

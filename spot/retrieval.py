@@ -2,14 +2,20 @@ import bisect, hashlib, json, os, random, resource, shutil
 pjoin = os.path.join
 
 try:
-  from .filtering import Expression
+  from .filtering import Expression, retrieve
 except(ImportError):
-  from filtering import Expression
+  from filtering import Expression, retrieve
 
 def pad(t, n, c=' '):
 	if type(t) is not str:
 		t = str(t)
 	return max(n - len(t), 0) * c + t
+
+def jdump(obj, file, indent=0):
+	file.write(json.dumps(obj, indent=indent).encode())
+
+def jdumps(obj):
+	return json.dumps(obj).encode()
 
 class Hash64:
   def __init__(self):
@@ -26,13 +32,21 @@ kLineLength = 16
 
 # TODO:
 # For reasons unknown, code fails when LEGIBLE=False
-LEGIBLE = True
+LEGIBLE = False
 if LEGIBLE:
 	_base64 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz{|'
 
 	# Converts an int to a 7-character string
 	def encode_int(x):
-		return _base64[x >> 36] + _base64[(x >> 30) % 64] + _base64[(x >> 24) % 64] + _base64[(x >> 18) % 64] + _base64[(x >> 12) % 64] + _base64[(x >> 6) % 64] + _base64[x % 64]
+		return (
+			_base64[x >> 36]
+			+ _base64[(x >> 30) % 64]
+			+ _base64[(x >> 24) % 64]
+			+ _base64[(x >> 18) % 64]
+			+ _base64[(x >> 12) % 64]
+			+ _base64[(x >>  6) % 64]
+			+ _base64[(x      ) % 64]
+		)
 
 	# Converts a 7-character string to an int
 	def decode_int(text):
@@ -65,20 +79,32 @@ if LEGIBLE:
 else:
 	# Converts an int to a 7-character string
 	def encode_int(x):
-		return chr(x >> 48) + chr((x >> 40) % 256) + chr((x >> 32) % 256) + chr((x >> 24) % 256) + chr((x >> 16) % 256) + chr((x >> 8) % 256) + chr(x % 256)
+		return (
+			  chr((x // (256**6)) % 256)
+			+ chr((x // (256**5)) % 256)
+			+ chr((x // (256**4)) % 256)
+			+ chr((x // (256**3)) % 256)
+			+ chr((x // (256**2)) % 256)
+			+ chr((x // (256**1)) % 256)
+			+ chr((x // (256**0)) % 256)
+		)
 
 	# Converts a 7-character string to an int
 	def decode_int(text):
+		if type(text) is not str:
+			text = text.decode()
 		r = 0
 		for c in text:
 			r = r * 256 + ord(c)
 		return r
 
 	def decode_line(line):
-		assert len(line) == kLineLength
+		if type(line) is not str:
+			line = line.decode()
+		assert line[-1] == '\n'
 		value = decode_int(line[:7])
 		docid = decode_int(line[7:14])
-		disambiguator = decode_int(line[-2:])
+		disambiguator = decode_int(line[-2])
 		return value, docid, disambiguator
 
 	def encode_line(value, docid, disambiguator):
@@ -87,17 +113,53 @@ else:
 		assert disambiguator < kMaxDisambiguator
 		value = encode_int(value)[-7:]
 		docid = encode_int(docid)[-7:]
-		disambiguator = encode_int(disambiguator)[-2:]
-		line = value + docid + disambiguator
+		disambiguator = encode_int(disambiguator)[-1:]
+		line = value + docid + disambiguator + '\n'
 		assert len(line) == kLineLength
 		return line
+
+	kMaxValue = 256**7
+	kMaxDocid = 256**7
+	kMaxDisambiguator = 256**1
+
+
+	# # Converts an int to a 7-character string
+	# def encode_int(x):
+	# 	return chr(x >> 48) + chr((x >> 40) % 256) + chr((x >> 32) % 256) + chr((x >> 24) % 256) + chr((x >> 16) % 256) + chr((x >> 8) % 256) + chr(x % 256)
+
+	# # Converts a 7-character string to an int
+	# def decode_int(text):
+	# 	r = 0
+	# 	for c in text:
+	# 		r = r * 256 + ord(c)
+	# 	return r
+
+	# def decode_line(line):
+	# 	assert len(line) == kLineLength
+	# 	value = decode_int(line[:7])
+	# 	docid = decode_int(line[7:14])
+	# 	disambiguator = decode_int(line[-2:])
+	# 	assert value < 50000
+	# 	assert docid < 100000
+	# 	return value, docid, disambiguator
+
+	# def encode_line(value, docid, disambiguator):
+	# 	assert value < kMaxValue
+	# 	assert docid < kMaxDocid
+	# 	assert disambiguator < kMaxDisambiguator
+	# 	value = encode_int(value)[-7:]
+	# 	docid = encode_int(docid)[-7:]
+	# 	disambiguator = encode_int(disambiguator)[-2:]
+	# 	line = value + docid + disambiguator
+	# 	assert len(line) == kLineLength
+	# 	return line
 
 	kMaxValue = 256**7
 	kMaxDocid = 256**7
 	kMaxDisambiguator = 256**2
 
 assert decode_int(encode_int(0)) == 0
-assert decode_int(encode_int(10)) == 10
+assert decode_int(encode_int(10)) == 10, encode_int(10)
 assert decode_int(encode_int(100)) == 100
 assert decode_int(encode_int(1000)) == 1000
 assert decode_int(encode_int(10000)) == 10000
@@ -110,6 +172,9 @@ class TokenINode(Expression):
 		self.index = index
 		self.offsets = offsets
 		self.disambiguator = disambiguator
+
+		for o in offsets:
+			assert o % kPageSize == 0
 
 		self.page_idx = page_idx
 		self.page = self.index.fetch_page(self.offsets[self.page_idx])
@@ -136,25 +201,25 @@ class TokenINode(Expression):
 			self.page = self.index.fetch_page(self.offsets[self.page_idx])
 
 	def encode(self):
-		return json.dumps({
-			'index_id': self.index.id,
-			'offsets': self.offsets,
-			'disambiguator': self.disambiguator,
-			'page_idx': self.page_idx,
-			'line_idx': self.line_idx,
-			'type': 'TokenINode'
+		return jdumps({
+			"index_id": self.index.id,
+			"offsets": self.offsets,
+			"disambiguator": self.disambiguator,
+			"page_idx": self.page_idx,
+			"line_idx": self.line_idx,
+			"type": "TokenINode"
 		})
 
 	@staticmethod
 	def decode(J):
 		return TokenINode(
-			index = indices[J['index_id']],
-			offsets = J['offsets'],
-			disambiguator = J['disambiguator'],
-			page_idx = J['page_idx'],
-			line_idx = J['line_idx']
+			index = indices[J["index_id"]],
+			offsets = J["offsets"],
+			disambiguator = J["disambiguator"],
+			page_idx = J["page_idx"],
+			line_idx = J["line_idx"]
 		)
-Expression.register('TokenINode', TokenINode)
+Expression.register("TokenINode", TokenINode)
 
 
 # A mapping from index IDs to indices.
@@ -201,8 +266,8 @@ class Index:
 
 		if not os.path.exists(path):
 			os.mkdir(path)
-			with open(pjoin(path, 'header.json'), 'w+') as f:
-				json.dump({
+			with open(pjoin(path, 'header.json'), "w+b") as f:
+				jdump({
 					"num_buckets": 4096,
 					"num_insertions": 0,
 					# Calling os.path.getsize leads to bugs where we've expanded
@@ -211,27 +276,32 @@ class Index:
 					"bodysize": 0,
 					"buckets": {}
 				}, f, indent=1)
-			with open(pjoin(path, 'body.txt'), 'w+') as f:
-				f.write('')
+			with open(pjoin(path, 'body.txt'), "w+b") as f:
+				f.write(b"")
 
 		self.path = path
-		with open(pjoin(path, 'header.json'), 'r') as f:
+		with open(pjoin(path, "header.json"), "rb") as f:
 			self.header = json.load(f)
-		self.body = open(pjoin(path, 'body.txt'), 'r+')
+		self.body = open(pjoin(path, "body.txt"), "r+b")
 
-		self.pageManager = PageManager(self, self.body, self.header['bodysize'])
+		self.pageManager = PageManager(self, self.body, self.header["bodysize"])
 
 	def documents_with_token(self, token):
+		# print('====' * 9)
+		# print(token)
 		token = hashfn(token)
-		bucket_id = str(token % self.header['num_buckets'])
-		if bucket_id not in self.header['buckets']:
+		bucket_id = str(token % self.header["num_buckets"])
+		if bucket_id not in self.header["buckets"]:
 			return
-		bucket = self.header['buckets'][bucket_id]
-		if token not in bucket['tokens']:
+		bucket = self.header["buckets"][bucket_id]
+		if token not in bucket["tokens"]:
 			return
-		disambiguator = bucket['tokens'].index(token)
-		offsets = bucket['page_offsets']
-		return TokenINode(self, offsets, disambiguator)
+		disambiguator = bucket["tokens"].index(token)
+		offsets = bucket["page_offsets"]
+		node = TokenINode(self, offsets, disambiguator)
+		# print(retrieve(node))
+		# print('====' * 9)
+		return node
 
 	def fetch_page(self, offset):
 		return self.pageManager.fetch_page(offset)
@@ -241,8 +311,8 @@ class Index:
 		self.body.flush()
 
 		self.header['bodysize'] = self.pageManager.filesize
-		with open(pjoin(self.path, 'header.json'), 'w') as f:
-			json.dump(self.header, f, indent=1)
+		with open(pjoin(self.path, 'header.json'), "wb") as f:
+			jdump(self.header, f, indent=1)
 
 	def num_insertions(self):
 		return self.header['num_insertions']
@@ -251,32 +321,32 @@ class Index:
 		self.header['num_insertions'] += 1
 		token = hashfn(token)
 		# JSON doesn't like integer keys in their maps, so our bucket_ids are strings :/
-		bucket_id = str(token % self.header['num_buckets'])
-		if bucket_id not in self.header['buckets']:
-			self.header['buckets'][bucket_id] = {
-				'tokens': [],
+		bucket_id = str(token % self.header["num_buckets"])
+		if bucket_id not in self.header["buckets"]:
+			self.header["buckets"][bucket_id] = {
+				"tokens": [],
 
 				# Offset (in bytes) from beginning of file.
-				'page_offsets': [self.pageManager.allocate_page().offset],
+				"page_offsets": [self.pageManager.allocate_page().offset],
 
 				# The value of first element of page.
-				# Since the page is currently empty we make this ' '.
-				'page_values': [''],
+				# Since the page is currently empty we make this "" (the first string).
+				"page_values": [""],
 			}
-		bucket = self.header['buckets'][bucket_id]
+		bucket = self.header["buckets"][bucket_id]
 
 		assert value < kMaxValue
 		assert docid < kMaxDocid
 
 		# Construct the "line" we wish to insert.
-		if token not in bucket['tokens']:
-			assert len(bucket['tokens']) + 1 < kMaxDisambiguator
-			bucket['tokens'].append(token)
-		disambiguator = bucket['tokens'].index(token)
+		if token not in bucket["tokens"]:
+			assert len(bucket["tokens"]) + 1 < kMaxDisambiguator
+			bucket["tokens"].append(token)
+		disambiguator = bucket["tokens"].index(token)
 		line = encode_line(value, docid, disambiguator)
 
-		page_idx = bisect.bisect(bucket['page_values'], line) - 1
-		offset = bucket['page_offsets'][page_idx]
+		page_idx = bisect.bisect(bucket["page_values"], line) - 1
+		offset = bucket["page_offsets"][page_idx]
 
 		page = self.pageManager.fetch_page(offset)
 
@@ -296,8 +366,8 @@ class Index:
 			page.lines = left
 			page.next_page = page2.offset
 
-			bucket['page_offsets'] = bucket['page_offsets'][:page_idx+1] + [page2.offset] + bucket['page_offsets'][page_idx+1:]
-			bucket['page_values'] = bucket['page_values'][:page_idx+1] + [page2.lines[0]] + bucket['page_values'][page_idx+1:]
+			bucket["page_offsets"] = bucket["page_offsets"][:page_idx+1] + [page2.offset] + bucket["page_offsets"][page_idx+1:]
+			bucket["page_values"] = bucket["page_values"][:page_idx+1] + [page2.lines[0]] + bucket["page_values"][page_idx+1:]
 
 			page.is_modified = True
 			page2.is_modified = True
@@ -336,7 +406,10 @@ class PageManager:
 	# Allocates a new page on disk.
 	def allocate_page(self):
 		header = encode_int(0) + ' ' + encode_int(0) + '\n'
+		assert len(header) == kPageHeaderSize
 		page = Page(self, header + '~' * (kPageSize - kPageHeaderSize), self.filesize)
+		assert len(page.lines) == 0
+		assert page.next_page == 0
 
 		self.index.body.seek(self.filesize)
 		self.index.body.write(page._encode())
@@ -363,9 +436,9 @@ class PageManager:
 PageManager.kMaxPagesInMemory = 32000  # ~128 MB
 
 """
-Invariant: if a 'Page' object exists, it has been allocated.
+Invariant: if a "Page" object exists, it has been allocated.
 
-A 'Page' object represents a contiguous chunk of disk space in
+A "Page" object represents a contiguous chunk of disk space in
 the index's "body" file.  It represents a list of documents and
 a pointer to the next Page in the linked list.
 
@@ -376,6 +449,8 @@ The format of the file is:
 """
 class Page:
 	def __init__(self, manager, text, offset):
+		if type(text) is not str:
+			text = text.decode()
 		assert offset % kPageSize == 0
 		self.manager = manager
 		self.is_dead = False
@@ -387,20 +462,42 @@ class Page:
 			return
 		length = decode_int(text[0:7])
 		self.next_page = decode_int(text[8:15])
+		assert length <= (kPageSize - kPageHeaderSize), f"{length} >= {kPageSize - kPageHeaderSize}"
+
 		self.lines = [text[i:i+kLineLength] for i in range(kPageHeaderSize, kPageHeaderSize + length, kLineLength)]
-		assert kLineLength * len(self.lines) == length, f'Expected {kLineLength} * {len(self.lines)} == {length}'
+		assert len(self.lines) * kLineLength == length, f"{len(self.lines)} != {length}"
+		for i, line in enumerate(self.lines):
+			assert len(line) == kLineLength
+			assert line != "~~~~~~~~~~~~~~~~"
+			try:
+				decode_line(line)
+			except:
+				# print(i, len(self.lines))
+				# for l in self.lines:
+				# 	print([ord(x) for x in l])
+				# print([ord(x) for x in line])
+				exit(0)
+		assert kLineLength * len(self.lines) == length, f"Expected {kLineLength} * {len(self.lines)} == {length}"
 		self.is_modified = False
 
 	# Writes this page to disk (if it has been modified).
 	def save(self, file):
+		self.is_modified = True  # TODO: remove
 		if self.is_modified:
 			file.seek(self.offset)
 			code = self._encode()
 			file.write(code)
 
+			for line in self.lines:
+				decode_line(line)
+
 			p2 = Page(self.manager, code, self.offset)
 			assert len(p2.lines) == len(self.lines)
+			if p2.lines != self.lines:
+				import code; code.interact(local=locals())
 			assert p2.lines == self.lines
+			for line in p2.lines:
+				decode_line(line)
 
 		self.is_modified = False
 
@@ -424,13 +521,15 @@ class Page:
 		assert len(line) == kLineLength
 		assert kPageHeaderSize + (len(self.lines) + 1) * kLineLength <= kPageSize
 		bisect.insort(self.lines, line)
+		v, i, d = decode_line(line)
 		self.is_modified = True
 
 	def _encode(self):
 		length = len(self.lines) * kLineLength
 		header = encode_int(length) + ' ' + encode_int(self.next_page) + '\n'
 		assert len(header) == kPageHeaderSize
-		body = ''.join(self.lines)
+		body = "".join(self.lines)
 		result = header + body
+		assert (kPageSize - len(result)) % kLineLength == 0
 		result += '~' * (kPageSize - len(result))
-		return result
+		return result.encode()
