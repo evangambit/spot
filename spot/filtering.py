@@ -1,5 +1,13 @@
 import json
 
+__all__ = [
+	'Expression',
+	'retrieve',
+	'ListINode',
+	'Or',
+	'And'
+]
+
 def retrieve(expression, max_results=float('inf')):
 	if type(expression) is str:
 		expression = Expression.decode(expression)
@@ -69,40 +77,6 @@ class ListINode(Expression):
 	def decode(J):
 		return ListINode(J['vals'], index=J['idx'])
 Expression.register('ListINode', ListINode)
-
-
-class FileINode(Expression):
-	def __init__(self, path, offset=0):
-		super().__init__()
-		self.path = path
-		self.file = None
-		self.offset = offset
-
-	def step(self):
-		if self.file is None:
-			self.file = open(self.path, 'r')
-			self.file.read(self.offset * 16)
-		if self.currentValue != Expression.kLastVal:
-			row = self.file.read(16); self.offset += 1
-			if len(row) == 0:
-				self.file.close()
-				self.currentValue = Expression.kLastVal
-			else:
-				self.currentValue = row
-		return self.currentValue
-
-	def encode(self):
-		return json.dumps({
-			'type': 'FileINode',
-			'path': self.path,
-			'offset': self.offset
-		})
-
-	@staticmethod
-	def decode(J):
-		return FileINode(J['path'], offset=J['offset'])
-FileINode.basedir = None
-Expression.register('FileINode', FileINode)
 
 class Or(Expression):
 	def __init__(self, *children):

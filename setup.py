@@ -7,8 +7,7 @@ setup(
     url='TODO',
     license='TODO',
     author='Morgan Redding',
-    author_email='TODO',
-    description='TODO',
+    description='Python package for token-based retrieval',
     install_requires=[],
     include_package_data=True
 )

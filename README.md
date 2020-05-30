@@ -58,18 +58,27 @@ The types of nodes currently supported are
 
 - And
 - Or
-- AtLeast
-
 
 ## Additional Notes
 
-1. Spot expects either 64-bit integer tokens or strings.  Strings are hashed to 64-bit integers, which means that it is possible (if unlikely) for hashing collisions to make results inaccurate.
+1. Spot expects either 64-bit integer tokens or strings.  Strings are hashed to 64-bit integers, which means that it is possible for hashing collisions to make results inaccurate.
 
-2. As an implementation detail, these hashes are forced into a range of [0, 4095].  The 64-bit hashes are checked during retrieval (to ensure high accuracy) but there is a limit of 64 tokens in each of the 4096 buckets.
+2. Values and doc ids should be *unsigned* 56-bit integers.
 
-3. You are encouraged to tack on additional sorting/filtering with your own code. Spot is intended to be used to quickly get a list of initial candidates, but its implementation necessarily imposes restrictions on the types of queries you can make.  If complete accuracy is required, you're also recommended to verify the correctness of Spot's results (due to the 64-bit hashing limitation).
+3. As an implementation detail, these hashes are forced into a range of [0, 4095], as this helps safe disk/memory.  The full 64-bit hashes are checked (indirectly) during retrieval, so from a user's perspective "this index hashes strings to 64 bit integers" is an accurate abstraction.  The only leakiness is that each bucket of tokens can only contain a maximum of 65k tokens.  In practice you should be perfectly safe even at millions of tokens (and if more than 65k collisions ever happen, the index will throw an error).
 
-4. Insertion is O(lg(n)).  Retrieval generally runs in time proportional to the output, but in cases where a rare tokens and a common token hash to the same bucket, retrieval can be comparatively slow.
 
-5. While insertion should always be quite fast, no thought was put into keeping ongoing queries accurate while insertions occur.  In general you should not be making insertions into a database that is currently serving requests.  This is great for personal projects (where you can regularly bring the server down, update it, and push it back up, or where it is cheap to keep duplicates of the index) but may be a non-starter otherwise.
+4. You are encouraged to tack on additional sorting/filtering with your own code. Spot is intended to be used to quickly get a list of initial candidates, but its implementation necessarily imposes restrictions on the types of queries you can make.  If 64-bit hash collisions concern you, you should verify the correctness of Spot's results yourself and remove any inaccurate documents.
+
+5. Insertion is technically O(n), though in practice it is very fast.  In particular it is O(1) in disk reads/writes but will need to copy N/32500 pointers in RAM.
+
+6. Queries are technically O(n) but, again, in practice are very fast, decreasing the number of elements you need to scan by a factor of 4096 and only forcing you to fetch documents (typically a slow operation) that are virtually guaranteed to be correct.
+
+## Future Goals:
+
+- Add an "AtLeast" node (i.e. "at least 2 of 'foo bar baz qux'")
+
+- Improve caching.  Caching pages in RAM isn't attrocious right now, but it is *far* sort of optimal.
+
+
 
