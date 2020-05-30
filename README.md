@@ -63,7 +63,7 @@ The types of nodes currently supported are
 
 1. Spot expects either 64-bit integer tokens or strings.  Strings are hashed to 64-bit integers, which means that it is possible for hashing collisions to make results inaccurate.
 
-2. Values and doc ids should be *unsigned* 56-bit integers.
+2. Doc IDs should be *unsigned* 56-bit integers.  Values are *signed* 56-bit integers, but with the smallest and largest values excluded (these are used to make the filtering code a bit nicer).
 
 3. As an implementation detail, these hashes are forced into a range of [0, 4095], as this helps safe disk/memory.  The full 64-bit hashes are checked (indirectly) during retrieval, so from a user's perspective "this index hashes strings to 64 bit integers" is an accurate abstraction.  The only leakiness is that each bucket of tokens can only contain a maximum of 65k tokens.  In practice you should be perfectly safe even at millions of tokens (and if more than 65k collisions ever happen, the index will throw an error).
 

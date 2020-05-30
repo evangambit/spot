@@ -8,11 +8,14 @@ import unittest
 
 from spot.filtering import *
 
+Expression.kFirstVal = ''
+Expression.kLastVal = '~~~~~~~~~~'
+
 class AndTest(unittest.TestCase):
   def identity_test1(self):
     node = And(ListINode(['a', 'b', 'c']))
-    assert node.currentValue == kFirstVal
-    for val in ['a', 'b', 'c', kLastVal]:
+    assert node.currentValue == Expression.kFirstVal
+    for val in ['a', 'b', 'c', Expression.kLastVal]:
       assert node.step() == val
       assert node.currentValue == val
 
@@ -21,8 +24,8 @@ class AndTest(unittest.TestCase):
       ListINode(['a', 'b', 'c']),
       ListINode(['a', 'b', 'c'])
     )
-    assert node.currentValue == kFirstVal
-    for val in ['a', 'b', 'c', kLastVal]:
+    assert node.currentValue == Expression.kFirstVal
+    for val in ['a', 'b', 'c', Expression.kLastVal]:
       assert node.step() == val
       assert node.currentValue == val
 
@@ -31,7 +34,7 @@ class AndTest(unittest.TestCase):
       ListINode(['a', 'b', 'c', 'd', 'e']),
       ListINode(['a', 'c', 'd'])
     )
-    assert node.currentValue == kFirstVal
+    assert node.currentValue == Expression.kFirstVal
     for val in ['a', 'c', 'd']:
       assert node.step() == val, f'Expected {val} but got {node.currentValue}'
       assert node.currentValue == val, f'Expected {val} but got {node.currentValue}'
@@ -42,15 +45,15 @@ class AndTest(unittest.TestCase):
       ListINode(['a', 'c', 'd'])
     )
     node2 = Expression.decode(node1.encode())
-    while node1.currentValue != kLastVal:
+    while node1.currentValue != Expression.kLastVal:
     	assert node1.currentValue == node2.currentValue
     	assert node1.step() == node2.step()
 
 class OrTest(unittest.TestCase):
   def identity_test1(self):
     node = Or(ListINode(['a', 'b', 'c']))
-    assert node.currentValue == kFirstVal
-    for val in ['a', 'b', 'c', kLastVal]:
+    assert node.currentValue == Expression.kFirstVal
+    for val in ['a', 'b', 'c', Expression.kLastVal]:
       assert node.step() == val
       assert node.currentValue == val
 
@@ -59,8 +62,8 @@ class OrTest(unittest.TestCase):
       ListINode(['a', 'b', 'c']),
       ListINode(['a', 'b', 'c'])
     )
-    assert node.currentValue == kFirstVal
-    for val in ['a', 'b', 'c', kLastVal]:
+    assert node.currentValue == Expression.kFirstVal
+    for val in ['a', 'b', 'c', Expression.kLastVal]:
       assert node.step() == val
       assert node.currentValue == val
 
@@ -69,7 +72,7 @@ class OrTest(unittest.TestCase):
       ListINode(['a', 'b', 'd', 'e']),
       ListINode(['a', 'c', 'd'])
     )
-    assert node.currentValue == kFirstVal
+    assert node.currentValue == Expression.kFirstVal
     for val in ['a', 'b', 'c', 'd', 'e']:
       assert node.step() == val, f'Expected {val} but got {node.currentValue}'
       assert node.currentValue == val, f'Expected {val} but got {node.currentValue}'
@@ -80,7 +83,7 @@ class OrTest(unittest.TestCase):
       ListINode(['a', 'c', 'd'])
     )
     node2 = Expression.decode(node1.encode())
-    while node1.currentValue != kLastVal:
+    while node1.currentValue != Expression.kLastVal:
     	assert node1.currentValue == node2.currentValue
     	assert node1.step() == node2.step()
 

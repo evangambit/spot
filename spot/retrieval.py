@@ -34,7 +34,8 @@ kPageHeaderSize = 16
 # a (value, docid, disambiguator) tuple, encoded using 7
 # bytes for the value and docid, and 2 for the disambiguator.
 kLineLength = 16
-kMaxValue = 256**7
+kMaxValue = (256**7)// 2
+kMinValue = (256**7)//-2
 kMaxDocid = 256**7
 kMaxDisambiguator = 256**2
 
@@ -204,7 +205,11 @@ class Index:
 			bucket.page_values.append(bytearray([0]*16))
 		bucket = self.header.buckets[bucket_id]
 
-		assert value < kMaxValue
+		# We reserve "kMinValue" and "kMaxValue - 1" for the filter
+		# nodes.
+		assert value > kMinValue
+		assert value < kMaxValue - 1
+
 		assert docid < kMaxDocid
 
 		# Construct the "line" we wish to insert.

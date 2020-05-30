@@ -5,7 +5,7 @@ __all__ = [
 	'retrieve',
 	'ListINode',
 	'Or',
-	'And'
+	'And',
 ]
 
 def retrieve(expression, max_results=float('inf')):
@@ -49,8 +49,8 @@ class Expression:
 		Expression.registry[string] = cls
 Expression.registry = {}
 
-Expression.kFirstVal = (-0x8000000000000000, None)
-Expression.kLastVal = ( 0x7fffffffffffffff, None)
+Expression.kFirstVal = ((256**7)//-2, None)
+Expression.kLastVal = ((256**7)// 2 - 1, None)
 
 class ListINode(Expression):
 	def __init__(self, vals, index=-1):
