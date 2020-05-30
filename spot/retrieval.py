@@ -11,6 +11,7 @@ except(ImportError):
 __all__ = [
 	'TokenINode',
 	'Index',
+	'hashfn'
 ]
 
 def pad(t, n, c=' '):
@@ -220,7 +221,8 @@ class Index:
 		disambiguator = bucket.tokens.index(token)
 		line = encode_line(value, docid, disambiguator)
 
-		page_idx = bisect.bisect(bucket.page_values, line) - 1
+		page_idx = max(bisect.bisect(bucket.page_values, line) - 1, 0)
+
 		offset = bucket.page_offsets[page_idx]
 
 		page = self.pageManager.fetch_page(offset)
@@ -245,11 +247,18 @@ class Index:
 			bucket.page_offsets = UInt64List(bucket.page_offsets[:page_idx+1] + [page2.offset] + bucket.page_offsets[page_idx+1:])
 			bucket.page_values = ByteArray16List(bucket.page_values[:page_idx+1] + [page2.lines[0]] + bucket.page_values[page_idx+1:])
 
+			bucket.page_values[page_idx + 0] =  page.lines[0]
+			bucket.page_values[page_idx + 1] = page2.lines[0]
+
 			page.is_modified = True
 			page2.is_modified = True
 
+			if page2.lines[0] < line:
+				page = page2
+
 		# Insert new entry, and then write the page to disk.
 		page.add_line(line)
+		bucket.page_values[page_idx] = page.lines[0]
 
 Index.id = 0
 

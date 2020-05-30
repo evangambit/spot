@@ -76,6 +76,8 @@ The types of nodes currently supported are
 
 ## Future Goals:
 
+- Add token-negation (i.e. "all documents that do *not* contain this node").
+
 - Add an "AtLeast" node (i.e. "at least 2 of 'foo bar baz qux'")
 
 - Improve caching.  Caching pages in RAM isn't attrocious right now, but it is *far* sort of optimal.
