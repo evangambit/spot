@@ -42,7 +42,7 @@ import spot
 
 index = spot.Index('my-index')
 
-criteria = spot.And(
+fetcher = spot.And(
   index.documents_with_token("hello"),
   spot.Or(
     index.documents_with_token("world"),
@@ -51,7 +51,7 @@ criteria = spot.And(
 )
 
 # Get the first 20 lines that contain the word "hello" and either the word "world" or "world!"
-results = index.retrieve(criteria, max_results=20)
+results = fetcher.retrieve(max_results=20)
 ```
 
 The types of nodes currently supported are

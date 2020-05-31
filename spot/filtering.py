@@ -2,27 +2,10 @@ import json
 
 __all__ = [
 	'Expression',
-	'retrieve',
 	'ListINode',
 	'Or',
 	'And',
 ]
-
-def retrieve(expression, max_results=float('inf')):
-	if type(expression) is str:
-		expression = Expression.decode(expression)
-
-	r = []
-	expression.step()
-	while expression.currentValue != Expression.kLastVal:
-		r.append(expression.currentValue)
-		if len(r) >= max_results:
-			break
-		expression.step()
-	if expression.currentValue == Expression.kLastVal:
-		return r, None
-	return r, expression.encode()
-
 
 class Expression:
 	def __init__(self):
@@ -35,6 +18,18 @@ class Expression:
 
 	def encode(self):
 		raise NotImplementedError()
+
+	def retrieve(self, max_results=0xffffffffffffffff):
+		r = []
+		self.step()
+		while self.currentValue != Expression.kLastVal:
+			r.append(self.currentValue)
+			if len(r) >= max_results:
+				break
+			self.step()
+		if self.currentValue == Expression.kLastVal:
+			return r
+		return r
 
 	@staticmethod
 	def decode(J):

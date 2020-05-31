@@ -63,7 +63,7 @@ if __name__ == '__main__':
 		index.documents_with_token('clean'),
 		index.documents_with_token('beasts')
 	)
-	results, _ = spot.retrieve(fetcher, 100)
+	results = fetcher.retrieve()
 	end_time = time.time()
 
 	print(f"Query completed in %.4f seconds" % (end_time - start_time))

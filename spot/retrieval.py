@@ -2,10 +2,10 @@ import bisect, hashlib, json, os, random, resource, shutil
 pjoin = os.path.join
 
 try:
-  from .filtering import Expression, retrieve
+  from .filtering import Expression
   from .header import *
 except(ImportError):
-  from filtering import Expression, retrieve
+  from filtering import Expression
   from header import *
 
 __all__ = [

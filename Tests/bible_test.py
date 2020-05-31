@@ -52,7 +52,7 @@ if __name__ == '__main__':
 		start_time = time.time()
 		# Query for verses that contain the word "beasts" and the word "clean"
 		fetcher = index.documents_with_token(word)
-		results, _ = spot.retrieve(fetcher)
+		results = fetcher.retrieve()
 		end_time = time.time()
 		assert len(results) == len(groundtruth[word])
 		for i, (score, docid) in enumerate(results):
