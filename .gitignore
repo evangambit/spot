@@ -1,0 +1,6 @@
+Examples/Bible/index/*
+__pycache__/*
+build/*
+dist/*
+spot.egg-info/*
+spot/__pycache__/*
