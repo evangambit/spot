@@ -161,12 +161,7 @@ class AndWithNegations(Expression):
 Expression.register('AndWithNegations', AndWithNegations)
 
 class And(Expression):
-	def __new__(cls, *children, negatation=None):
-		if negatation is not None:
-			return AndWithNegations(*children, negatation=negatation)
-		return object.__new__(cls)
-
-	def __init__(self, *children, negatation=None):
+	def __init__(self, *children):
 		super().__init__()
 		self.children = tuple(children)
 

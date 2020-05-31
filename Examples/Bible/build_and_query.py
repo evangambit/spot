@@ -44,6 +44,7 @@ if __name__ == '__main__':
 		tokens = get_tokens(verse)
 		if 'beasts' in tokens and 'clean' in tokens:
 			groundtruth.append(i)
+		index.add_doc(i, value=len(verse))
 		for token in tokens:
 			index.add(token, docid=i, value=len(verse))
 	index.save()
@@ -59,7 +60,7 @@ if __name__ == '__main__':
 
 	start_time = time.time()
 	# Query for verses that contain the word "beasts" and the word "clean"
-	fetcher = spot.And(
+	fetcher = index.AND(
 		index.documents_with_token('clean'),
 		index.documents_with_token('beasts')
 	)

@@ -2,10 +2,10 @@ import bisect, hashlib, json, os, random, resource, shutil
 pjoin = os.path.join
 
 try:
-  from .filtering import Expression
+  from .filtering import Expression, And
   from .header import *
 except(ImportError):
-  from filtering import Expression
+  from filtering import Expression, And
   from header import *
 
 __all__ = [
@@ -169,8 +169,10 @@ class Index:
 		self.pageManager = PageManager(self, self.body, self.header.bodysize)
 
 	def documents_with_token(self, token):
-		token = hashfn(token)
-		bucket_id = token % self.header.num_buckets
+		token, bucket_id = self._hash(token)
+		return self._documents_with_token(token, bucket_id)
+
+	def _documents_with_token(self, token, bucket_id):
 		if bucket_id not in self.header.buckets:
 			return
 		bucket = self.header.buckets[bucket_id]
@@ -181,8 +183,30 @@ class Index:
 		node = TokenINode(self, offsets, disambiguator)
 		return node
 
+	# Returns a TokenINode that iterates over all documents.
+	def all_documents(self):
+		return self._documents_with_token(0, 0)
+
 	def fetch_page(self, offset):
 		return self.pageManager.fetch_page(offset)
+
+	# Wrappers around "And" and "Or" nodes.  They automatically
+	# add "all_documents" if all inputs are negated.
+	def AND(self, *nodes, negation=None):
+		if negation is None:
+			negation = [0] * len(nodes)
+		if sum(negation) == len(nodes):
+			return AndWithNegations(self.all_documents(), *nodes, negation=negation)
+		elif sum(negation) > 0:
+			return AndWithNegations(*nodes, negation=negation)
+		return And(*nodes)
+
+	def OR(self, *nodes, negation=None):
+		if negation is None:
+			negation = [0] * len(nodes)
+		if sum(negation) == len(nodes):
+			return Or(self.all_documents(), *nodes, negation)
+		return Or(*nodes, negation)
 
 	def save(self):
 		self.pageManager.save()
@@ -195,10 +219,21 @@ class Index:
 	def num_insertions(self):
 		return self.header.num_insertions
 
+	def _hash(self, token):
+		token = hashfn(token)
+		# We reserve bucket 0 for 'all docs'.
+		bucket_id = (token % (self.header.num_buckets - 1)) + 1
+		return token, bucket_id
+
+	def add_doc(self, docid, value):
+		self._add(0, 0, docid, value)
+
 	def add(self, token, docid, value):
 		self.header.num_insertions += 1
-		token = hashfn(token)
-		bucket_id = token % self.header.num_buckets
+		token, bucket_id = self._hash(token)
+		self._add(token, bucket_id, docid, value)
+
+	def _add(self, token, bucket_id, docid, value):
 		if bucket_id not in self.header.buckets:
 			self.header.buckets[bucket_id] = Bucket(bucket_id)
 			bucket = self.header.buckets[bucket_id]
