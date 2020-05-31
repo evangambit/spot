@@ -76,7 +76,7 @@ Expression.register('ListINode', ListINode)
 class Or(Expression):
 	def __init__(self, *children):
 		super().__init__()
-		self.children = children
+		self.children = tuple(children)
 
 	def step(self):
 		v = min([c.currentValue for c in self.children])
@@ -97,10 +97,78 @@ class Or(Expression):
 		return Or(*[Expression.decode(c) for c in J['children']])
 Expression.register('Or', Or)
 
-class And(Expression):
-	def __init__(self, *children):
+class AndWithNegations(Expression):
+	def __init__(self, *children, negatation):
 		super().__init__()
-		self.children = children
+		assert sum([bool(x) for x in negatation]) < len(children), 'There must be at least one non-negated child!'
+		assert negatation is not None
+		assert len(children) == len(negatation)
+		self.children = tuple(zip(children, [bool(x) for x in negatation]))
+
+	def _highest_child_value(self):
+		return max([c[0].currentValue for c in self.children if not c[1]])
+
+	def step(self):
+		if self.currentValue == Expression.kLastVal:
+			return self.currentValue
+
+		# All (non-negated) children currently point to the value
+		# we just emitted (self.currentValue), so we increment
+		# all of them.
+		low = min([c[0].currentValue for c in self.children])
+		for child, negated in self.children:
+			if child.currentValue == low:
+				child.step()
+
+		# Now we keep incrementing children until
+		# 1. all non-negated children have equal values
+		# 2. all negated children are above that value
+		while True:
+			high = self._highest_child_value()
+			for child, negated in self.children:
+				while child.currentValue < high:
+					child.step()
+			high = self._highest_child_value()
+			if sum([(c[0].currentValue == high) != c[1] for c in self.children]) == len(self.children):
+				self.currentValue = high
+				return self.currentValue
+
+			# It's possible for all children (including
+			# negated ones!) to be equal.  In this case we
+			# want to increment all children.
+			if sum([c[0].currentValue == high for c in self.children]) == len(self.children):
+				for child, _ in self.children:
+					child.step()
+
+			high = self._highest_child_value()
+			if high == Expression.kLastVal:
+				self.currentValue = Expression.kLastVal
+				return self.currentValue
+
+	def encode(self):
+		return json.dumps({
+			'children': [c[0].encode() for c in self.children],
+			'negatation': [c[1] for c in self.children],
+			'type': 'AndWithNegations'
+		})
+
+	@staticmethod
+	def decode(J):
+		return AndWithNegations(
+			*[Expression.decode(c) for c in J['children']],
+			negatation=J['negatation']
+		)
+Expression.register('AndWithNegations', AndWithNegations)
+
+class And(Expression):
+	def __new__(cls, *children, negatation=None):
+		if negatation is not None:
+			return AndWithNegations(*children, negatation=negatation)
+		return object.__new__(cls)
+
+	def __init__(self, *children, negatation=None):
+		super().__init__()
+		self.children = tuple(children)
 
 	def step(self):
 		for child in self.children:
