@@ -144,7 +144,7 @@ class Uint64Dict(dict):
 		return r, offset
 
 class Header:
-	def __init__(self, num_buckets=131072):
+	def __init__(self, num_buckets=4096):
 		self.num_buckets = num_buckets
 		self.num_insertions = 0
 		# Calling os.path.getsize leads to bugs where we've expanded
