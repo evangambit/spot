@@ -35,6 +35,7 @@ if __name__ == '__main__':
 	# Insert every word from every verse into the index.
 	for i, verse in enumerate(verses):
 		tokens = get_tokens(verse)
+		index.add_doc(i, value=len(verse))
 		for token in tokens:
 			index.add(token, docid=i, value=len(verse))
 		for word in words:

@@ -5,6 +5,7 @@ __all__ = [
 	'ListINode',
 	'Or',
 	'And',
+	'AndWithNegations',
 ]
 
 class Expression:
@@ -98,12 +99,12 @@ class Or(Expression):
 Expression.register('Or', Or)
 
 class AndWithNegations(Expression):
-	def __init__(self, *children, negatation):
+	def __init__(self, *children, negation):
 		super().__init__()
-		assert sum([bool(x) for x in negatation]) < len(children), 'There must be at least one non-negated child!'
-		assert negatation is not None
-		assert len(children) == len(negatation)
-		self.children = tuple(zip(children, [bool(x) for x in negatation]))
+		assert sum([bool(x) for x in negation]) < len(children), 'There must be at least one non-negated child!'
+		assert negation is not None
+		assert len(children) == len(negation)
+		self.children = tuple(zip(children, [bool(x) for x in negation]))
 
 	def _highest_child_value(self):
 		return max([c[0].currentValue for c in self.children if not c[1]])
@@ -148,7 +149,7 @@ class AndWithNegations(Expression):
 	def encode(self):
 		return json.dumps({
 			'children': [c[0].encode() for c in self.children],
-			'negatation': [c[1] for c in self.children],
+			'negation': [c[1] for c in self.children],
 			'type': 'AndWithNegations'
 		})
 
@@ -156,7 +157,7 @@ class AndWithNegations(Expression):
 	def decode(J):
 		return AndWithNegations(
 			*[Expression.decode(c) for c in J['children']],
-			negatation=J['negatation']
+			negation=J['negation']
 		)
 Expression.register('AndWithNegations', AndWithNegations)
 

@@ -2,10 +2,10 @@ import bisect, hashlib, json, os, random, resource, shutil
 pjoin = os.path.join
 
 try:
-  from .filtering import Expression, And
+  from .filtering import Expression, And, AndWithNegations
   from .header import *
 except(ImportError):
-  from filtering import Expression, And
+  from filtering import Expression, And, AndWithNegations
   from header import *
 
 __all__ = [
@@ -196,7 +196,7 @@ class Index:
 		if negation is None:
 			negation = [0] * len(nodes)
 		if sum(negation) == len(nodes):
-			return AndWithNegations(self.all_documents(), *nodes, negation=negation)
+			return AndWithNegations(self.all_documents(), *nodes, negation=[0] + list(negation))
 		elif sum(negation) > 0:
 			return AndWithNegations(*nodes, negation=negation)
 		return And(*nodes)
