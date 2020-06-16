@@ -74,6 +74,8 @@ The types of nodes currently supported are
 
 6. Queries are technically O(n) but, again, in practice are very fast, decreasing the number of elements you need to scan by a factor of 4096 and only forcing you to fetch documents (typically a slow operation) that are virtually guaranteed to be correct.
 
+7. We don't use a BPlusTree for a few reasons.  Any stand-alone BPlusTree implementation won't support the "disambiguator" trick we use.  We could hack around this, but there is also the problem that no open source implementations have a shared memory manager to handle opening many trees at once.  An alternative to work around this is to have a single tree (rather than one tree per bucket), and add the bucket id to the keys (e.g. btree[f"{bucket_id}:{sort_value}"] = docid) but when we experimented with this idea using the most popular implementation (https://github.com/NicolasLM/bplustree) it was far slower than our current implementation.
+
 ## Future Goals:
 
 - Add token-negation (i.e. "all documents that do *not* contain this node").
