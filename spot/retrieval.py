@@ -302,10 +302,9 @@ The PageManager is responsible for allocating new pages and
 fetching existing pages.  It is also responsible for caching
 pages in RAM (see PageManager.kMaxPagesInMemory).
 
-Caching is very primitive right now: when the cache is full, a
-random page is removed from the cache.  This is decent
-asymptotically (common queries will tend to fill the cache) but
-clearly suboptimal.
+When the cache is full we just pick a random page to drop.
+Hilariously this outperforms using an LRU cache by a large
+margin.
 """
 class PageManager:
 	def __init__(self, index, file, filesize):
@@ -333,8 +332,8 @@ class PageManager:
 
 		self.index.body.seek(self.filesize)
 		self.index.body.write(page._encode())
-		self._add_page_to_memory(self.index.pageManager.filesize, page)
-		self.index.pageManager.filesize += kPageSize
+		self._add_page_to_memory(self.filesize, page)
+		self.filesize += kPageSize
 		return page
 
 	def _add_page_to_memory(self, offset, page):
