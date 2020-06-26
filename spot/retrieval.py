@@ -352,7 +352,7 @@ class PageManager:
 # The bigger this is, the faster index construction is.  When
 # testing this should be small (to catch caching errors), but
 # when performance is important it should be large.
-PageManager.kMaxPagesInMemory = 8000  # ~128 MB
+PageManager.kMaxPagesInMemory = 128000  # ~512 MB
 
 """
 Invariant: if a "Page" object exists, it has been allocated.
