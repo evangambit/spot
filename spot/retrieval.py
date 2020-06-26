@@ -352,7 +352,7 @@ class PageManager:
 # The bigger this is, the faster index construction is.  When
 # testing this should be small (to catch caching errors), but
 # when performance is important it should be large.
-PageManager.kMaxPagesInMemory = 32000  # ~128 MB
+PageManager.kMaxPagesInMemory = 8000  # ~128 MB
 
 """
 Invariant: if a "Page" object exists, it has been allocated.
@@ -404,7 +404,7 @@ class Page:
 	# while reading, or if we start supporting deletion) we may
 	# need to revisit how to make Page objects safe.
 	def mark_dead(self, file):
-		self.save()
+		self.save(file)
 		self.is_dead = True
 
 	def add_line(self, line):
