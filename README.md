@@ -4,23 +4,43 @@ Spot is a Python module for token-based retrieval.
 
 ## Retrieval
 
-Suppose you have a document with millions of lines and you want to construct an index that lets you search lines by word.
+Suppose you have a million reddit comments and you want to construct an index that lets you search for comments by score, author, and text matching.
 
 ```Python
 import spot
 
-with open('my-file.txt', 'r') as f:
-  lines = f.readlines()
+index = spot.Index.create(
+	'my-index',
+	# The rankings our index will support
+	rankings=["score", "time_created"],
+	# We can also restrict our search to ranges of times and/or scores
+	ranges=["depth", "length"]
+)
 
-# Create index.
-index = spot.Index('my-index')
+comments = load_comments_from_disk()
 
-for i, line in enumerate(lines):
-  for token in lines.lower().split(' '):
-    index.add(token=token, docid=i, value=len(line))
-index.save()
+for comment in comments:
+	tokens = set(comment.bodytext.lower().split(' '))
+	tokens.add(f"author:{comment.author}")
 
-print('Index constructed in %.2f seconds' % (end_time - start_time))
+	# For every comment we have
+	# 1) a unique doc id
+	# 2) the tokens we want to search by
+	# 3a) arbitrary json data we may want
+	# 3b) this json includes a key for every ranking and range our index needs
+  index.add(docid=comment.id, token=tokens, jsondata={
+  	# Probably useful stuff to have, but irrelevant to the index.
+  	"permalink": comment.permalink,
+  	"bodytext": comment.bodytext,
+
+  	# Required (because of our "Index.create()" call above):
+  	"score": comment.score,
+  	"time_created": float(comment["created_utc"]),
+  	"length": len(comment.bodytext),
+  	"depth": len(comment.distance_to_root()),
+  })
+
+index.commit()
 ```
 
 Now we can load the index from disk and query it.
@@ -30,59 +50,32 @@ import spot
 
 index = spot.Index('my-index')
 
-# Query for verses that contain the word "dog"
-for score, docid in index.documents_with_token('dog'):
-  print(lines[docid])
+# Query for verses that contain the word "dog", sorted by score.
+# NOTE: sorting is low-to-high by default.  Use "-" to sort from high-to-low.
+for score, docid in index.token_iterator('dog', ranking="-score"):
+	jsondata = index.json_from_docid(docid)
+	print(jsondata["permalink"])
+  print(jsondata["bodytext"])
+  print('----' * 20)
 ```
 
-Because these results are iterator-based, they can be passed as inputs to other iterators, which lets you buid up complex queries.
+Because these results are iterator-based, they can be efficiently combined to build up complex queries:
 
 ```Python
 import spot
 
 index = spot.Index('my-index')
 
-fetcher = spot.And(
-  index.documents_with_token("hello"),
-  spot.Or(
-    index.documents_with_token("world"),
-    index.documents_with_token("world!"),
+iterator = spot.intersect(
+  index.token_iterator("hello", ranking="-score"),
+  spot.union(
+    index.documents_with_token("world", ranking="-score"),
+    index.documents_with_token("world!", ranking="-score"),
   )
 )
 
-# Get the first 20 lines that contain the word "hello" and either the word "world" or "world!"
-results = fetcher.retrieve(max_results=20)
+for i in range(20):
+	score, docid = next(iterator)
+	jsondata = index.json_from_docid(docid)
+	print(jsondata["permalink"])
 ```
-
-The types of nodes currently supported are
-
-- And
-- Or
-
-## Additional Notes
-
-1. Spot expects either 64-bit integer tokens or strings.  Strings are hashed to 64-bit integers, which means that it is possible for hashing collisions to make results inaccurate.
-
-2. Doc IDs should be *unsigned* 56-bit integers.  Values are *signed* 56-bit integers, but with the smallest and largest values excluded (these are used to make the filtering code a bit nicer).
-
-3. As an implementation detail, these hashes are forced into a range of [0, 4095], as this helps safe disk/memory.  The full 64-bit hashes are checked (indirectly) during retrieval, so from a user's perspective "this index hashes strings to 64 bit integers" is an accurate abstraction.  The only leakiness is that each bucket of tokens can only contain a maximum of 65k tokens.  In practice you should be perfectly safe even at millions of tokens (and if more than 65k collisions ever happen, the index will throw an error).
-
-
-4. You are encouraged to tack on additional sorting/filtering with your own code. Spot is intended to be used to quickly get a list of initial candidates, but its implementation necessarily imposes restrictions on the types of queries you can make.  If 64-bit hash collisions concern you, you should verify the correctness of Spot's results yourself and remove any inaccurate documents.
-
-5. Insertion is technically O(n), though in practice it is very fast.  In particular it is O(1) in disk reads/writes but will need to copy N/32500 pointers in RAM.
-
-6. Queries are technically O(n) but, again, in practice are very fast, decreasing the number of elements you need to scan by a factor of 4096 and only forcing you to fetch documents (typically a slow operation) that are virtually guaranteed to be correct.
-
-7. We don't use a BPlusTree for a few reasons.  Any stand-alone BPlusTree implementation won't support the "disambiguator" trick we use.  We could hack around this, but there is also the problem that no open source implementations have a shared memory manager to handle opening many trees at once.  An alternative to work around this is to have a single tree (rather than one tree per bucket), and add the bucket id to the keys (e.g. btree[f"{bucket_id}:{sort_value}"] = docid) but when we experimented with this idea using the most popular implementation (https://github.com/NicolasLM/bplustree) it was far slower than our current implementation.
-
-## Future Goals:
-
-- Add token-negation (i.e. "all documents that do *not* contain this node").
-
-- Add an "AtLeast" node (i.e. "at least 2 of 'foo bar baz qux'")
-
-- Improve caching.  Caching pages in RAM isn't attrocious right now, but it is *far* sort of optimal.
-
-
-
