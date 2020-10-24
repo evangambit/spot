@@ -35,11 +35,15 @@ class Index:
     c = conn.cursor()
     c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, json string) WITHOUT ROWID")
     c.execute(f"CREATE TABLE tokens ({', '.join(columns)})")
-    for r in rankings:
-      c.execute(f"CREATE INDEX {r}_index ON tokens(token_hash, {r}_rank, docid)")
-
     conn.commit()
     return Index(path, conn)
+  
+  # Typically call this *after* constructing your initial index, since
+  # it's faster to compute indices *after* inserting your rows.
+  def create_indices(self):
+    for r in self.rankings:
+      self.c.execute(f"CREATE INDEX {r}_index ON tokens(token_hash, {r}_rank, docid)")
+    self.commit()
 
   def __init__(self, path, conn=None):
     if conn:
@@ -80,15 +84,15 @@ class Index:
     self.c.execute(f"SELECT json FROM documents WHERE docid={docid}")
     return json.loads(self.c.fetchone()[0])
 
-  def all_iterator(self, ranking, chunksize=kDefaultChunkSize, limit=float('inf'), offset=0):
-    return self._token_iterator(kReservedHash, ranking, chunksize, limit, offset)
+  def all_iterator(self, ranking, range_requirements=[], chunksize=kDefaultChunkSize, limit=float('inf'), offset=0):
+    return self._token_iterator(kReservedHash, ranking, range_requirements, chunksize, limit, offset)
 
-  def token_iterator(self, token, ranking, chunksize=kDefaultChunkSize, limit=float('inf'), offset=0):
-    return self._token_iterator(hashfn(token), ranking, chunksize, limit, offset)
+  def token_iterator(self, token, ranking, range_requirements=[], chunksize=kDefaultChunkSize, limit=float('inf'), offset=0):
+    return self._token_iterator(hashfn(token), ranking, range_requirements, chunksize, limit, offset)
 
-  def not_token_iterator(self, token, ranking, chunksize=kDefaultChunkSize, limit=float('inf'), offset=0):
+  def not_token_iterator(self, token, ranking, range_requirements=[], chunksize=kDefaultChunkSize, limit=float('inf'), offset=0):
     all_it = self.all_iterator(ranking, chunksize, limit, offset)
-    token_it = self._token_iterator(hashfn(token), ranking, chunksize, limit, offset)
+    token_it = self._token_iterator(hashfn(token), ranking, range_requirements, chunksize, limit, offset)
 
     try:
       a = next(token_it)
@@ -116,16 +120,21 @@ class Index:
       except StopIteration:
         return
 
-
-
-
-
-  def _token_iterator(self, hashedToken, ranking, chunksize, limit, offset):
+  def _token_iterator(self, hashedToken, ranking, range_requirements, chunksize, limit, offset):
     if ranking[0] == '-':
       order = 'DESC'
       ranking = ranking[1:]
     else:
       order = 'ASC'
+
+    ranges = []
+    for name, op, val in range_requirements:
+      assert name in self.ranges
+      ranges.append(f'{name}_range {op} {val}')
+    ranges = ' AND '.join(ranges)
+    if len(ranges) > 0:
+      ranges = 'AND ' + ranges
+
     assert ranking in self.rankings
     r = []
     i = 0
@@ -134,19 +143,24 @@ class Index:
       if i >= len(r):
         i -= len(r)
         offset += len(r)
-        r = self.c.execute(f"""
+        sql_command = f"""
           SELECT {ranking}_rank, docid
           FROM tokens
           WHERE token_hash={hashedToken}
+          {ranges}
           ORDER BY {ranking}_rank {order}, docid {order}
           LIMIT {chunksize}
-          OFFSET {offset}""").fetchall()
+          OFFSET {offset}"""
+        try:
+          r = self.c.execute(sql_command).fetchall()
+        except:
+          print(sql_command)
+          raise Exception('eek')
       if i >= len(r):
         return
       yield r[i]
       num_returned += 1
       if num_returned >= limit:
-        yield kMaxVal
         return
       i += 1
 
