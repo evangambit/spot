@@ -33,7 +33,7 @@ class Index:
     ]
     conn = sqlite3.connect(path)
     c = conn.cursor()
-    c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, json string) WITHOUT ROWID")
+    c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, created_utc READ, json string) WITHOUT ROWID")
     c.execute(f"CREATE TABLE tokens ({', '.join(columns)})")
     conn.commit()
     return Index(path, conn)
@@ -62,8 +62,19 @@ class Index:
   def commit(self):
     self.conn.commit()
 
-  def insert(self, docid, tokens, jsondata):
-    self.c.execute(f"INSERT INTO documents VALUES (?, ?)", (docid, json.dumps(jsondata)))
+  def delete(self, docid):
+    self.c.execute(f'DELETE FROM documents WHERE docid = {docid}')
+    return self.c.fetchall()
+
+  def tokens(self, docid):
+    self.c.execute(f"SELECT token_hash FROM tokens WHERE docid={docid}")
+    return self.c.fetchall()
+
+  def replace(self, docid, created_utc, tokens, jsondata):
+    self.insert(docid, created_utc, tokens, jsondata, _command='REPLACE')
+
+  def insert(self, docid, created_utc, tokens, jsondata, _command='INSERT'):
+    self.c.execute(f"{_command} INTO documents VALUES (?, ?, ?)", (docid, created_utc, json.dumps(jsondata)))
 
     columnValues = [
       docid,
@@ -81,8 +92,13 @@ class Index:
       self.c.execute(insertionString, columnValues)
 
   def json_from_docid(self, docid):
+    if docid < 0:
+      docid *= -1
     self.c.execute(f"SELECT json FROM documents WHERE docid={docid}")
-    return json.loads(self.c.fetchone()[0])
+    r = self.c.fetchone()
+    if r is None:
+      return None
+    return json.loads(r[0])
 
   def all_iterator(self, ranking, range_requirements=[], chunksize=kDefaultChunkSize, limit=float('inf'), offset=0):
     return self._token_iterator(kReservedHash, ranking, range_requirements, chunksize, limit, offset)
@@ -124,8 +140,10 @@ class Index:
     if ranking[0] == '-':
       order = 'DESC'
       ranking = ranking[1:]
+      uop = '-'
     else:
       order = 'ASC'
+      uop = ''
 
     ranges = []
     for name, op, val in range_requirements:
@@ -144,18 +162,19 @@ class Index:
         i -= len(r)
         offset += len(r)
         sql_command = f"""
-          SELECT {ranking}_rank, docid
+          SELECT {uop}{ranking}_rank, {uop}docid
           FROM tokens
           WHERE token_hash={hashedToken}
           {ranges}
           ORDER BY {ranking}_rank {order}, docid {order}
           LIMIT {chunksize}
           OFFSET {offset}"""
-        try:
-          r = self.c.execute(sql_command).fetchall()
-        except:
-          print(sql_command)
-          raise Exception('eek')
+        print(sql_command)
+        # try:
+        r = self.c.execute(sql_command).fetchall()
+        # except:
+        #   print(sql_command)
+        #   raise Exception('eek')
       if i >= len(r):
         return
       yield r[i]
