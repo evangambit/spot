@@ -33,7 +33,7 @@ class Index:
     ]
     conn = sqlite3.connect(path)
     c = conn.cursor()
-    c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, created_utc READ, json string) WITHOUT ROWID")
+    c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, created_utc REAL, last_modified REAL, json string) WITHOUT ROWID")
     c.execute(f"CREATE TABLE tokens ({', '.join(columns)})")
     conn.commit()
     return Index(path, conn)
@@ -74,7 +74,10 @@ class Index:
     self.insert(docid, created_utc, tokens, jsondata, _command='REPLACE')
 
   def insert(self, docid, created_utc, tokens, jsondata, _command='INSERT'):
-    self.c.execute(f"{_command} INTO documents VALUES (?, ?, ?)", (docid, created_utc, json.dumps(jsondata)))
+    self.c.execute(
+      f"{_command} INTO documents VALUES (?, ?, ?, ?)",
+      (docid, created_utc, time.time(), json.dumps(jsondata))
+    )
 
     columnValues = [
       docid,
