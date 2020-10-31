@@ -33,7 +33,7 @@ class Index:
     ]
     conn = sqlite3.connect(path)
     c = conn.cursor()
-    c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, created_utc REAL, last_modified REAL, json string) WITHOUT ROWID")
+    c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, postid INTEGER, created_utc REAL, last_modified REAL, json string) WITHOUT ROWID")
     c.execute(f"CREATE TABLE tokens ({', '.join(columns)})")
     conn.commit()
     return Index(path, conn)
@@ -41,6 +41,14 @@ class Index:
   # Typically call this *after* constructing your initial index, since
   # it's faster to compute indices *after* inserting your rows.
   def create_indices(self):
+    # Lets us quickly find all comments for a given post.
+    self.c.execute(f"CREATE INDEX postid_index ON documents(postid, docid)")
+
+    # Lets us quickly find all tokens for a given document.
+    self.c.execute(f"CREATE INDEX docid_index ON tokens(docid)")
+
+    # Lets us quickly iterate over all documents with a token, ordered by a
+    # ranking.
     for r in self.rankings:
       self.c.execute(f"CREATE INDEX {r}_index ON tokens(token_hash, {r}_rank, docid)")
     self.commit()
@@ -70,13 +78,13 @@ class Index:
     self.c.execute(f"SELECT token_hash FROM tokens WHERE docid={docid}")
     return self.c.fetchall()
 
-  def replace(self, docid, created_utc, tokens, jsondata):
-    self.insert(docid, created_utc, tokens, jsondata, _command='REPLACE')
+  def replace(self, docid, postid, created_utc, tokens, jsondata):
+    self.insert(docid, postid, created_utc, tokens, jsondata, _command='REPLACE')
 
-  def insert(self, docid, created_utc, tokens, jsondata, _command='INSERT'):
+  def insert(self, docid, postid, created_utc, tokens, jsondata, _command='INSERT'):
     self.c.execute(
-      f"{_command} INTO documents VALUES (?, ?, ?, ?)",
-      (docid, created_utc, time.time(), json.dumps(jsondata))
+      f"{_command} INTO documents VALUES (?, ?, ?, ?, ?)",
+      (docid, postid, created_utc, time.time(), json.dumps(jsondata))
     )
 
     columnValues = [
