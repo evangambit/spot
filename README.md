@@ -10,34 +10,34 @@ Suppose you have a million reddit comments and you want to construct an index th
 import spot
 
 index = spot.Index.create(
-	'my-index',
-	# The rankings our index will support
-	rankings=["score", "time_created"],
-	# We can also restrict our search to ranges of times and/or scores
-	ranges=["depth", "length"]
+  'my-index',
+  # The rankings our index will support
+  rankings=["score", "time_created"],
+  # We can also restrict our search to ranges of times and/or scores
+  ranges=["depth", "length"]
 )
 
 comments = load_comments_from_disk()
 
 for comment in comments:
-	tokens = set(comment.bodytext.lower().split(' '))
-	tokens.add(f"author:{comment.author}")
+  tokens = set(comment.bodytext.lower().split(' '))
+  tokens.add(f"author:{comment.author}")
 
-	# For every comment we have
-	# 1) a unique doc id
-	# 2) the tokens we want to search by
-	# 3a) arbitrary json data we may want
-	# 3b) this json includes a key for every ranking and range our index needs
+  # For every comment we have
+  # 1) a unique doc id
+  # 2) the tokens we want to search by
+  # 3a) arbitrary json data we may want
+  # 3b) this json includes a key for every ranking and range our index needs
   index.add(docid=comment.id, token=tokens, jsondata={
-  	# Probably useful stuff to have, but irrelevant to the index.
-  	"permalink": comment.permalink,
-  	"bodytext": comment.bodytext,
+    # Probably useful stuff to have, but irrelevant to the index.
+    "permalink": comment.permalink,
+    "bodytext": comment.bodytext,
 
-  	# Required (because of our "Index.create()" call above):
-  	"score": comment.score,
-  	"time_created": float(comment["created_utc"]),
-  	"length": len(comment.bodytext),
-  	"depth": len(comment.distance_to_root()),
+    # Required (because of our "Index.create()" call above):
+    "score": comment.score,
+    "time_created": float(comment["created_utc"]),
+    "length": len(comment.bodytext),
+    "depth": len(comment.distance_to_root()),
   })
 
 index.commit()
@@ -53,8 +53,8 @@ index = spot.Index('my-index')
 # Query for verses that contain the word "dog", sorted by score.
 # NOTE: sorting is low-to-high by default.  Use "-" to sort from high-to-low.
 for score, docid in index.token_iterator('dog', ranking="-score"):
-	jsondata = index.json_from_docid(docid)
-	print(jsondata["permalink"])
+  jsondata = index.json_from_docid(docid)
+  print(jsondata["permalink"])
   print(jsondata["bodytext"])
   print('----' * 20)
 ```
@@ -75,7 +75,7 @@ iterator = spot.intersect(
 )
 
 for i in range(20):
-	score, docid = next(iterator)
-	jsondata = index.json_from_docid(docid)
-	print(jsondata["permalink"])
+  score, docid = next(iterator)
+  jsondata = index.json_from_docid(docid)
+  print(jsondata["permalink"])
 ```
