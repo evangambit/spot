@@ -87,6 +87,10 @@ class Index:
       (docid, postid, created_utc, time.time(), json.dumps(jsondata))
     )
 
+    # Delete existing tokens
+    if _command == "REPLACE":
+      self.c.execute(f"DELETE FROM tokens WHERE docid={docid}")
+
     columnValues = [
       docid,
       0,  # Placeholder for token hash
