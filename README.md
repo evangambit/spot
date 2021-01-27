@@ -11,7 +11,7 @@ import spot
 
 index = spot.Index.create(
   'my-index',
-  # The rankings our index will support
+  # The rankings our index will support (must have at least one)
   rankings=["score", "time_created"],
   # We can also restrict our search to ranges of times and/or scores
   ranges=["depth", "length"]
