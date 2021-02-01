@@ -33,10 +33,9 @@ class Index:
     ]
     conn = sqlite3.connect(path)
     c = conn.cursor()
-    c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, postid INTEGER, created_utc REAL, last_modified REAL, json string) WITHOUT ROWID")
+    c.execute("CREATE TABLE documents (docid INTEGER PRIMARY KEY, key INTEGER, json string) WITHOUT ROWID")
     c.execute(f"CREATE TABLE tokens ({', '.join(columns)})")
-    # "tokens" is a comma-delimited list of tokens with the given hash.
-    c.execute("CREATE TABLE token_counts (token_hash INTEGER, tokens string, count INTEGER)")
+    c.execute("CREATE TABLE token_counts (token_hash INTEGER, token string, count INTEGER)")
     conn.commit()
     return Index(path, conn)
   
@@ -76,37 +75,67 @@ class Index:
 
   def delete(self, docid):
     self.c.execute(f'DELETE FROM documents WHERE docid = {docid}')
+    # TODO: update tokens and token_counts tables.
     return self.c.fetchall()
 
   def tokens(self, docid):
     self.c.execute(f"SELECT token_hash FROM tokens WHERE docid={docid}")
     return self.c.fetchall()
 
-  def replace(self, docid, postid, created_utc, tokens, jsondata):
-    self.insert(docid, postid, created_utc, tokens, jsondata, _command='REPLACE')
+  def replace(self, jsondata):
+    self.insert(jsondata, _command='REPLACE')
 
-  def insert(self, docid, postid, created_utc, tokens, jsondata, _command='INSERT'):
-    tokens = list(set(tokens))
- 
-    self.c.execute(
-      f"{_command} INTO documents VALUES (?, ?, ?, ?, ?)",
-      (docid, postid, created_utc, time.time(), json.dumps(jsondata))
-    )
+  def dump(self, fn):
+    with self.conn:
+      self.c.execute('SELECT json FROM documents')
+      result = self.c.fetchone()
+      with open(fn, 'w') as f:
+        while result is not None:
+          f.write(result[0] + '\n')
+          result = self.c.fetchone()
+
+  """
+  Special keys:
+    docid (auto-populated)
+    tokens
+  """
+  def insert(self, jsondata, _command='INSERT'):
+    with self.conn:
+      if _command == "REPLACE":
+        # Make sure the document already exists.
+        self.c.execute(f'SELECT json FROM documents WHERE docid={jsondata["docid"]}')
+        oldjson = json.loads(self.c.fetchone()[0])
+      else:
+        oldjson = None
+
+      # If the user doesn't provide a docid, create our own.
+      if 'docid' not in jsondata:
+        assert _command != 'REPLACE'
+        self.c.execute("SELECT COALESCE(MAX(docid), 0) FROM documents")
+        jsondata['docid'] = self.c.fetchone()[0] + 1
+
+      self.c.execute(
+        f"{_command} INTO documents VALUES (?, ?, ?)",
+        (jsondata['docid'], jsondata.get('key', 0), json.dumps(jsondata))
+      )
 
     # Delete existing tokens
     if _command == "REPLACE":
-      self.c.execute(f'SELECT token_hash FROM tokens WHERE docid={docid}')
-      token_hashes = list(self.c.fetchall())
-      for token_hash, in token_hashes:
-        self.c.execute(f'SELECT * FROM token_counts WHERE token_hash={token_hash}')
-        # 
-        token_hash, t, count = self.c.fetchone()
-        self.c.execute(f'DELETE FROM token_counts WHERE token_hash={token_hash}')
-        self.c.execute('INSERT INTO token_counts VALUES (?, ?, ?)', (token_hash, t, count - 1))
-      self.c.execute(f"DELETE FROM tokens WHERE docid={docid}")
+      self.c.execute(f"DELETE FROM tokens WHERE docid={jsondata['docid']}")
+      for token in oldjson["tokens"] + ['']:
+        if token == '':
+          tokenHash = kReservedHash
+        else:
+          tokenHash = hashfn(token)
+        print('-', repr(token), tokenHash)
+        self.c.execute(f'SELECT count FROM token_counts WHERE token="{token}"')
+        count = self.c.fetchone()[0]
+        print(count, '->', count - 1)
+        self.c.execute(f'DELETE FROM token_counts WHERE token="{token}"')
+        self.c.execute('INSERT INTO token_counts VALUES (?, ?, ?)', (tokenHash, token, count - 1))
 
     columnValues = [
-      docid,
+      jsondata['docid'],
       0,  # Placeholder for token hash
     ] + [
       jsondata[r] for r in self.rankings
@@ -115,52 +144,49 @@ class Index:
     ]
     insertionString = "INSERT INTO tokens VALUES (" + ",".join(["?"] * len(columnValues)) + ")"
 
-    tokenHashes = [hashfn(t) for t in tokens]
-
-    tokens.append('')
-    tokenHashes.append(kReservedHash)
-
     # tokens.add(kReservedHash)  # All documents get this hash (so we can support negated search)
-    for token, tokenHash in zip(tokens, tokenHashes):
+    for token in jsondata["tokens"] + ['']:
+      if token == '':
+        tokenHash = kReservedHash
+      else:
+        tokenHash = hashfn(token)
       columnValues[1] = tokenHash
       self.c.execute(insertionString, columnValues)
       # Update token_counts
-      self.c.execute(f"SELECT tokens, count FROM token_counts WHERE token_hash={tokenHash}")
+      self.c.execute(f'SELECT count FROM token_counts WHERE token="{token}"')
       result = self.c.fetchone()
       if result is not None:
-        t, count = result
-        t = set(t.split(','))
-        t.add(token)
-        t = ','.join(t)
-        self.c.execute(f'DELETE FROM token_counts WHERE token_hash={tokenHash}')
+        self.c.execute(f'DELETE FROM token_counts WHERE token="{token}"')
+        count = result[0]
       else:
         count = 0
-        t = token
-      self.c.execute('INSERT INTO token_counts VALUES (?, ?, ?)', (tokenHash, t, count + 1))
+      print('+', repr(token), tokenHash, count + 1)
+      self.c.execute('INSERT INTO token_counts VALUES (?, ?, ?)', (tokenHash, token, count + 1))
+    self.conn.commit()
+
+  def tokens_counts(self):
+    self.c.execute('SELECT token, count FROM token_counts')
+    return self.c.fetchall()
 
   # NOTE: this will lose information regarding
   def recompute_token_counts(self):
     self.c.execute('DROP TABLE token_counts')
-    self.c.execute("CREATE TABLE token_counts (token_hash INTEGER, tokens string, count INTEGER)")
+    self.c.execute("CREATE TABLE token_counts (token_hash INTEGER, token string, count INTEGER)")
     # NOTE: we can't just do
     # "SELECT token_hash, COUNT(token_hash) FROM tokens GROUP BY token_hash"
     # Since we won't know what tokens correspond to each token_hash.
-    C = {kReservedHash: 0}
-    T = {kReservedHash: set([''])}
+    C = {'': 0}
     self.c.execute('SELECT json FROM documents')
     for j, in self.c.fetchall():
-      C[kReservedHash] += 1
-      for token in json.loads(j)['tokens']:
-        h = hashfn(token)
-        if h not in T:
-          T[h] = set()
-          C[h] = 0
-        T[h].add(token)
-        C[h] += 1
-    for k in C:
+      tokens = json.loads(j)['tokens']
+      C[''] += 1
+      for token in tokens:
+        C[token] = C.get(token, 0) + 1
+    for token in C:
       self.c.execute('INSERT INTO token_counts VALUES (?, ?, ?)', (
-        k, ','.join(T[k]), C[k]
+        kReservedHash if token == '' else hashfn(token), token, C[token]
       ))
+    self.commit()
 
   def num_occurrences(self, token):
     self.c.execute(f'SELECT count FROM token_counts WHERE token_hash={hashfn(token)}')
@@ -168,9 +194,9 @@ class Index:
 
   def common_tokens(self, n, prefix=None):
     if prefix:
-      self.c.execute(f'SELECT tokens, count FROM token_counts WHERE tokens LIKE "{prefix}%" ORDER BY -count LIMIT {n}')
+      self.c.execute(f'SELECT token, count FROM token_counts WHERE token LIKE "{prefix}%" ORDER BY -count LIMIT {n}')
     else:
-      self.c.execute(f'SELECT tokens, count FROM token_counts ORDER BY -count LIMIT {n}')
+      self.c.execute(f'SELECT token, count FROM token_counts ORDER BY -count LIMIT {n}')
     return self.c.fetchall()
 
   def json_from_docid(self, docid):

@@ -28,7 +28,11 @@ for comment in comments:
   # 2) the tokens we want to search by
   # 3a) arbitrary json data we may want
   # 3b) this json includes a key for every ranking and range our index needs
-  index.add(docid=comment.id, token=tokens, jsondata={
+  index.add(jsondata={
+    # Used by the index.
+    "docid": comment.id,  # a unique integer
+    "tokens": list(tokens),  # stored as a comma-delimited string internally
+
     # Probably useful stuff to have, but irrelevant to the index.
     "permalink": comment.permalink,
     "bodytext": comment.bodytext,
