@@ -1,11 +1,12 @@
 import json
 import os
 import re
+import shutil
 import sqlite3
 from functools import lru_cache
 
 from .token_index import TokenIndex
-from .nodes import TokenNode, AndNode, ExpressionContext, OrNode, EmptyNode
+from .nodes import TokenNode, AndNode, ExpressionContext, OrNode, EmptyNode, load_node
 
 kIntRangePrefix = '#'
 
@@ -91,8 +92,7 @@ class IntRange:
 def is_valid_token(name : str) -> bool:
   if name[:len(kIntRangePrefix)] == kIntRangePrefix:
     return re.match(r"\d+:\d+", name[kIntRangePrefix:])
-  return re.match(r"^\w+$", name) is not None
-
+  return re.match(r"^[^#\s\"][^\s\"]*$", name) is not None
 
 class TokenMapper:
   def __init__(self, c : sqlite3.Cursor):
@@ -115,7 +115,7 @@ class TokenMapper:
   def increment(self, token_str : str, c : sqlite3.Cursor):
     if self.exists(token_str, c):
       c.execute("UPDATE tokens SET count = count + 1 WHERE token_str = ?", (token_str,))
-      return c.lastrowid
+      return self(token_str, c)
     else:
       c.execute("INSERT INTO tokens (token_str, count) VALUES (?, ?)", (token_str, 1))
       return c.lastrowid
@@ -123,7 +123,12 @@ class TokenMapper:
   def decrement(self, token_str : str, c : sqlite3.Cursor):
     assert self.exists(token_str, c)
     c.execute("UPDATE tokens SET count = count - 1 WHERE token_str = ?", (token_str,))
-    return c.lastrowid
+    return self(token_str, c)
+
+  def search(self, query, c : sqlite3.Cursor):
+    assert '"' not in query
+    c.execute(f'SELECT token_str, count FROM tokens WHERE token_str LIKE "{query}%" LIMIT 20')
+    return c.fetchall()
 
   @lru_cache(maxsize = 512)
   def __call__(self, token_str : str, c : sqlite3.Cursor):
@@ -143,16 +148,11 @@ class TokenMapper:
 
 class Index:
   @staticmethod
-  def create(path : str, rankings : [str] = []):
-    assert not os.path.exists(path)
-    os.mkdir(path)
-
-    conn = sqlite3.connect(os.path.join(path, 'db.db'))
+  def create(conn : sqlite3.Connection, path : str, rankings : [str] = [], force = False):
     ctx = conn.cursor()
-    # ctx.execute("CREATE TABLE pair_counts (id1 INTEGER, id2 INTEGER, count INTEGER)")
     ctx.execute("""
-    CREATE TABLE documents (
-      data BLOB
+      CREATE TABLE documents (
+        data BLOB
     )
     """)
 
@@ -172,7 +172,7 @@ class Index:
     with open(os.path.join(path, 'metadata.json'), 'w+') as f:
       json.dump(metadata, f, indent=2)
 
-    return Index(path)
+    return Index(conn, path)
 
   def doc2ranges(self, doc):
     # Subclass this to automatically add ranges based on the document.
@@ -200,21 +200,37 @@ class Index:
       token2int[token] = self.token_mapper.increment(token, self.ctx)
     for token_index in self.token_indices:
       rank = int(rankings[token_index.name])
+      token_index.insert(self.ctx, rank, docid, 0)
       for token in tokens:
         token_index.insert(self.ctx, rank, docid, token2int[token])
     self.conn.commit()
+    return docid
 
   def modify_document(self, docid : int, doc : dict):
     olddoc = self.fetch(docid)
-    A = list(self.doc2tokens(olddoc))
-    B = list(self.doc2tokens(doc))
+    A = set(self.doc2tokens(olddoc))
+    B = set(self.doc2tokens(doc))
     addedTokens = list(B - A)
     deletedTokens = list(A - B)
     unchangedTokens = list(A.intersection(B))
+
+    token2int = {}
     for token in addedTokens:
-      self.token_mapper.increment(token, self.ctx)
+      token2int[token] = self.token_mapper.increment(token, self.ctx)
     for token in deletedTokens:
-      self.token_mapper.decrement(token, self.ctx)
+      token2int[token] = self.token_mapper.decrement(token, self.ctx)
+
+    rankings = doc['rankings']
+    for token_index in self.token_indices:
+      rank = int(rankings[token_index.name])
+      for token in addedTokens:
+        token_index.insert(self.ctx, rank, docid, token2int[token])
+      for token in deletedTokens:
+        token_index.delete(self.ctx, docid, token2int[token])
+
+    self.ctx.execute("UPDATE documents SET data = ? WHERE rowid = ?", (json.dumps(doc), docid))
+
+    self.conn.commit()
 
   def fetch(self, docid):
     self.ctx.execute("SELECT data FROM documents WHERE rowid = ?", (docid,))
@@ -224,17 +240,28 @@ class Index:
     for token_index in self.token_indices:
       token_index.create_indices(self.ctx)
 
-  def intersect(self, *tags):
-    tokens = []
+  def intersect(self, *tags, invert=None):
+    if invert is not None:
+      assert isinstance(invert, list) or isinstance(invert, tuple)
+      assert len(invert) == len(tags)
+    else:
+      invert = [False] * len(tags)
+
+    token_nodes = []
     range_tokens = {}
-    for tag in tags:
+    for neg, tag in zip(invert, tags):
       if isinstance(tag, str):
         if self.token_mapper.exists(tag, self.ctx):
-          tokens.append(self.token_mapper(tag, self.ctx))
+          token_nodes.append((TokenNode(self.token_mapper(tag, self.ctx)), neg))
+          continue
+        elif neg:
+          # Skip non-existent, negated tokens.
+          continue
         else:
+          # A non-existent token automatically implies 0 results.
           return EmptyNode()
-        continue
       range_name, op, value = tag
+      assert neg is False # todo: support negated range queries?
       assert op in ['>', '<']
       if op == '<':
         T = self.ranges[range_name].less_than(value)
@@ -253,14 +280,16 @@ class Index:
       else:
         range_nodes[k] = [OrNode(T)]
 
-    token_nodes = [TokenNode(token) for token in tokens]
+    all_nodes = token_nodes + [ (node, False) for node in range_nodes.values() ]
 
-    all_nodes = token_nodes + sum(range_nodes.values(), [])
+    if sum(x[1] for x in all_nodes) == len(all_nodes):
+      # all nodes are inverted
+      all_nodes.append((TokenNode(0), False))
 
     if len(all_nodes) == 1:
-      return all_nodes[0]
-
-    return AndNode([(node, False) for node in all_nodes])
+      assert not all_nodes[0][1]
+      return all_nodes[0][0]
+    return AndNode(all_nodes)
 
   def __len__(self):
     return self.n
@@ -280,7 +309,10 @@ class Index:
   def add_range(self, name, low, high):
     self.ranges[name] = IntRange(name, low, high)
 
-  def expression_context(self, ranking):
+  def token_search(self, query : str):
+    return self.token_mapper.search(query, self.ctx)
+
+  def expression_context(self, ranking : str):
     index = [i for i in self.token_indices if i.name == ranking]
     assert len(index) == 1
     return ExpressionContext(
@@ -291,9 +323,9 @@ class Index:
       index = index[0],
     )
 
-  def __init__(self, path):
+  def __init__(self, conn, path):
     metadata = json.load(open(os.path.join(path, 'metadata.json'), 'r'))
-    self.conn = sqlite3.connect(os.path.join(path, 'db.db'))
+    self.conn = conn
     self.ctx = self.conn.cursor()
     self.path = path
     self.token_indices = [TokenIndex(**data) for data in metadata['token_indices']]
