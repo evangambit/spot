@@ -5,11 +5,12 @@ from collections import deque
 kBigNumber = 9e99
 
 class ExpressionContext:
-  def __init__(self, c : sqlite3.Cursor, n : int, r : int, pageLength : int, index, last = (kBigNumber, kBigNumber)):
+  def __init__(self, c : sqlite3.Cursor, n : int, r : int, pageLength : int, index, first = (-kBigNumber, kBigNumber), last = (kBigNumber, kBigNumber)):
     self.c = c
     self.n = n
     self.r = r  # (how long it takes to check a doc for a token) / (how long it takes to yield the next docid in a posting list)
     self.pageLength = pageLength
+    self.first = first
     self.last = last
     self.index = index
 
@@ -199,8 +200,7 @@ class TokenNode(Node):
         c = ctx.c,
         token = self.token,
         n = ctx.pageLength,
-        rank = self.rank,
-        offset = self.offset + 1,
+        where = self.current if self.current is not None else ctx.first,
       )
     if len(self._cache) == 0:
       self.current = ctx.last

@@ -6,6 +6,7 @@ $ pip install .; python3 -m unittest filtering_tests.py
 
 import os
 import shutil
+import sqlite3
 import unittest
 
 import spot
@@ -14,7 +15,9 @@ class IndexTest(unittest.TestCase):
   def test1(self):
     if os.path.exists('tmp'):
       shutil.rmtree('tmp')
-    index = spot.Index.create('tmp', ['score', 'age'])
+    os.mkdir('tmp')
+    conn = sqlite3.connect("tmp/db.sqlite")
+    index = spot.Index.create(conn, 'tmp', ['score', 'age'])
 
     index.add_range('score', 0, 15)
 
@@ -46,7 +49,7 @@ class IndexTest(unittest.TestCase):
       node.next(ctx)
     self.assertEqual([a[1] for a in A], [1, 4])
 
-    index = spot.Index('tmp')
+    index = spot.Index(conn, 'tmp')
     ctx = index.expression_context('score')
     node = index.intersect('foo', 'bar')
     node.start(ctx)

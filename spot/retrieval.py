@@ -324,7 +324,8 @@ class Index:
     )
 
   def __init__(self, conn, path):
-    metadata = json.load(open(os.path.join(path, 'metadata.json'), 'r'))
+    with open(os.path.join(path, 'metadata.json'), 'r') as f:
+      metadata = json.load(f)
     self.conn = conn
     self.ctx = self.conn.cursor()
     self.path = path

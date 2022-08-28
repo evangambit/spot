@@ -28,12 +28,29 @@ class TokenIndex:
     self.name = name
     self.tableName = f"tokens_{name}"
 
-  def docids(self, c : sqlite3.Cursor, token : int, n : int, rank : float, offset : int):
-    query = f"SELECT rank, doc_id FROM {self.tableName} WHERE token = ? AND rank >= ? ORDER BY token ASC, rank ASC, doc_id ASC LIMIT ? OFFSET ?"
+  def docids(self, c : sqlite3.Cursor, token : int, n : int, where : float):
+    query = f"SELECT rank, doc_id FROM {self.tableName} WHERE token = ? AND (rank, doc_id) > (?, ?) ORDER BY token ASC, rank ASC, doc_id ASC LIMIT ?"
     c.execute(query, (
-      token, rank, n, offset
+      token, where[0], where[1], n
     ))
     return c.fetchall()
+
+  def intersect(self, c : sqlite3.Cursor, tokens : [int], n : int, where : float = None):
+    assert len(tokens) > 0
+    queries = []
+    args = []
+    for token in tokens:
+      assert type(token) is int
+      if where is None:
+        queries.append(f"SELECT rank, doc_id FROM {self.tableName} WHERE token = ?")
+        args.append(token)
+      else:
+        queries.append(f"SELECT rank, doc_id FROM {self.tableName} WHERE token = ? AND (rank, doc_id) > (?, ?)")
+        args += (token, where[0], where[1])
+    c.execute(' intersect '.join(queries), args)
+    return c.fetchmany(n)
+
+  # TODO: intersect
 
   def tokens(self, c : sqlite3.Cursor, doc_id : int):
     assert isinstance(doc_id, int)
