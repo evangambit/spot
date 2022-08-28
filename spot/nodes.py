@@ -168,31 +168,25 @@ class AndNode(Node):
 
 
 class TokenNode(Node):
-  def __init__(self, token : int, rank = -kBigNumber, offset = -1, current = None, node_type = 'TokenNode'):
+  def __init__(self, token : int, current = None, node_type = 'TokenNode'):
     assert node_type == 'TokenNode'
     super().__init__()
     self.token = token
     self._cache = None
-    self.rank = rank
-    self.offset = offset
     self.current = tuple(current) if current is not None else None
 
   def state(self):
     return {
       'token': self.token,
-      'rank': self.current[0],
-      'offset': self.offset,
       'current': self.current,
       'node_type': 'TokenNode',
     }
-
 
   def start(self, ctx):
     assert self._cache is None
     self._cache = deque(maxlen = ctx.pageLength)
     if self.current is None:
       self.next(ctx)
-
 
   def next(self, ctx):
     if len(self._cache) == 0:
@@ -206,14 +200,7 @@ class TokenNode(Node):
       self.current = ctx.last
       return self.current
 
-    rank, docid = self._cache.popleft()
-    if rank > self.rank:
-      self.rank = rank
-      self.offset = 0
-    else:
-      self.offset += 1
-
-    self.current = (rank, docid)
+    self.current = self._cache.popleft()
     return self.current
 
 
