@@ -70,6 +70,7 @@ class IntRange:
     return self._range(low, a0 - 1, step // 2) + r + self._range(a, high, step // 2)
 
   def tokens(self, x : int):
+    x -= self.low
     r = []
     for bit in range(self.num_bits):
       step = 1 << bit
@@ -127,7 +128,7 @@ class TokenMapper:
 
   def search(self, query, c : sqlite3.Cursor):
     assert '"' not in query
-    c.execute(f'SELECT token_str, count FROM tokens WHERE token_str LIKE "{query}%" LIMIT 20')
+    c.execute(f'SELECT token_str, count FROM tokens WHERE token_str LIKE "{query}%" ORDER BY count DESC LIMIT 20')
     return c.fetchall()
 
   @lru_cache(maxsize = 512)
@@ -180,7 +181,7 @@ class Index:
 
   def doc2tokens(self, doc):
     # Subclass this to automatically add tokens based on the document.
-    tokens = doc.get('tags', [])
+    tokens = list(doc.get('tags', []))
     ranges = self.doc2ranges(doc)
     for name in ranges:
       tokens += self.ranges[name].tokens(ranges[name])
@@ -275,10 +276,12 @@ class Index:
     range_nodes = {}
     for k in range_tokens:
       T = [(TokenNode(token), False) for token in range_tokens[k]]
-      if len(T) == 1:
-        range_nodes[k] = [T[0][0]]
+      if len(T) == 0:
+        return EmptyNode()
+      elif len(T) == 1:
+        range_nodes[k] = T[0][0]
       else:
-        range_nodes[k] = [OrNode(T)]
+        range_nodes[k] = OrNode(T)
 
     all_nodes = token_nodes + [ (node, False) for node in range_nodes.values() ]
 
