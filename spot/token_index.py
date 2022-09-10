@@ -1,5 +1,6 @@
 import sqlite3
 
+
 class TokenIndex:
   """
   This class is the main reason this file exists. It manages a SQL

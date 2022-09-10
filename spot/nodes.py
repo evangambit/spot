@@ -5,9 +5,16 @@ from collections import deque
 kBigNumber = 9e99
 
 class ExpressionContext:
-  def __init__(self, c : sqlite3.Cursor, n : int, r : int, pageLength : int, index, first = (-kBigNumber, kBigNumber), last = (kBigNumber, kBigNumber)):
+  def __init__(
+      self,
+      c : sqlite3.Cursor,
+      r : int,
+      pageLength : int,
+      index,
+      first = (-kBigNumber, kBigNumber),
+      last = (kBigNumber, kBigNumber)
+    ):
     self.c = c
-    self.n = n
     self.r = r  # (how long it takes to check a doc for a token) / (how long it takes to yield the next docid in a posting list)
     self.pageLength = pageLength
     self.first = first
@@ -94,6 +101,7 @@ class OrNode(Node):
   def next(self, ctx):
     self.current = self._increment(ctx)
     return self.current
+
 
 class AndNode(Node):
   def __init__(self, children, current = None, node_type = 'AndNode'):
@@ -212,6 +220,7 @@ kNodeNameToType = {
 def load_node(state):
   return kNodeNameToType[state['node_type']](**state)
 
+
 class EmptyNode(Node):
   def state(self):
     return {}
@@ -219,6 +228,7 @@ class EmptyNode(Node):
     self.current = ctx.last
   def next(self, ctx):
     return ctx.last
+
 
 class ListNode(Node):
   def __init__(self, A, idx = None):

@@ -10,6 +10,7 @@ from .nodes import TokenNode, AndNode, ExpressionContext, OrNode, EmptyNode, loa
 
 kIntRangePrefix = '#'
 
+
 def num_bits(low, high):
   bits = 0
   r = high - low
@@ -95,6 +96,7 @@ def is_valid_token(name : str) -> bool:
     return re.match(r"\d+:\d+", name[kIntRangePrefix:])
   return re.match(r"^[^#\s\"][^\s\"]*$", name) is not None
 
+
 class TokenMapper:
   def __init__(self, c : sqlite3.Cursor):
     c.execute("""CREATE TABLE IF NOT EXISTS tokens  (
@@ -167,7 +169,6 @@ class Index:
       'token_indices': [ti.json() for ti in token_indices],
       'token_mapper': {},
       'ranges': {},
-      'n': 0,
     }
 
     with open(os.path.join(path, 'metadata.json'), 'w+') as f:
@@ -181,17 +182,19 @@ class Index:
 
   def doc2tokens(self, doc):
     # Subclass this to automatically add tokens based on the document.
-    tokens = list(doc.get('tags', []))
-    ranges = self.doc2ranges(doc)
-    for name in ranges:
-      tokens += self.ranges[name].tokens(ranges[name])
-    return tokens
+    return list(doc.get('tags', []))
+
+  def doc2rankings(self, doc):
+    # Subclass this to automatically add rankings based on the document.
+    return doc['rankings']
 
   def insert_document(self, doc : dict):
-    self.n += 1
-
     tokens = self.doc2tokens(doc)
-    rankings = doc['rankings']
+    rankings = self.doc2rankings(doc)
+    ranges = self.doc2ranges(doc)
+
+    for name in ranges:
+      tokens += self.ranges[name].tokens(ranges[name])
 
     self.ctx.execute("INSERT INTO documents (data) VALUES (?)", (json.dumps(doc),))
     docid = self.ctx.lastrowid
@@ -294,9 +297,6 @@ class Index:
       return all_nodes[0][0]
     return AndNode(all_nodes)
 
-  def __len__(self):
-    return self.n
-
   def save(self):
     ranges = {}
     for k in self.ranges:
@@ -306,7 +306,6 @@ class Index:
         'token_indices': [ti.json() for ti in self.token_indices],
         'token_mapper': {},
         'ranges': ranges,
-        'n': self.n,
       }, f, indent=2)
 
   def add_range(self, name, low, high):
@@ -320,7 +319,6 @@ class Index:
     assert len(index) == 1
     return ExpressionContext(
       self.ctx,
-      n = 1,
       r = 1,
       pageLength = 1000,
       index = index[0],
@@ -337,5 +335,4 @@ class Index:
     for k in metadata['ranges']:
       self.ranges[k] = IntRange(**metadata['ranges'][k])
     self.token_mapper = TokenMapper(self.ctx)
-    self.n = metadata['n']
 
