@@ -33,9 +33,6 @@ class ExpressionContext:
 
 
 class Node:
-  def __init__(self):
-    self.current = None
-
   def next(self, ctx, x):
     """
     Return the smallest value that is greater than x
@@ -81,8 +78,12 @@ class AndNode(Node):
 
 
 class TokenNode(Node):
-  def __init__(self, token : int, node_type = 'TokenNode'):
-    assert node_type == 'TokenNode'
+  """
+  A token node that iterates over all docids. This is appropriate for Or-based
+  queries, or And-based queries if the token is the least common (or nearly the
+  least common) token.
+  """
+  def __init__(self, token : int):
     super().__init__()
     self.token = token
     self._cache = deque()
@@ -112,6 +113,29 @@ class TokenNode(Node):
         self._cache.append(ctx.last)
         break
     return self._cache[0]
+
+
+class TokenNode2(Node):
+  """
+  A token node implementation that performs binary search to determine the
+  existence of docids. This is appropriate when performing an And query if
+  a token is very common (compared to the rarest token in the query).
+  """
+  def __init__(self, token : int):
+    super().__init__()
+    self.token = token
+    self._cache = deque()
+
+  def next(self, ctx, x):
+    r = ctx.index.docids(
+        c = ctx.c,
+        token = self.token,
+        n = ctx.pageLength,
+        where = x,
+      )
+    if len(r) == 0:
+      return ctx.last
+    return r[0]
 
 
 class EmptyNode(Node):
