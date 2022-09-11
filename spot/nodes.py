@@ -54,22 +54,10 @@ class NotNode(Node):
 
 
 class AndNode(Node):
-  def __init__(self, children, node_type = 'AndNode'):
-    assert node_type == 'AndNode'
+  def __init__(self, children):
     assert len(children) > 1
-
-    # Load from json state if necessary
-    if isinstance(children[0][0], dict):
-      children = [(load_node(child[0]), child[1]) for child in children]
-
     self.children = [child[0] for child in children]
     self.negated = [child[1] for child in children]
-
-  def state(self):
-    return {
-      'children': list(zip([child.state() for child in self.children], self.negated)),
-      'node_type': 'AndNode',
-    }
 
   def is_satisfied(self, vals, x):
     for v, n in zip(vals, self.negated):
@@ -99,12 +87,6 @@ class TokenNode(Node):
     self.token = token
     self._cache = deque()
 
-  def state(self):
-    return {
-      'token': self.token,
-      'node_type': 'TokenNode',
-    }
-
   def next(self, ctx, x):
     if len(self._cache) == 0:
       self._cache += ctx.index.docids(
@@ -132,17 +114,7 @@ class TokenNode(Node):
     return self._cache[0]
 
 
-kNodeNameToType = {
-  'TokenNode': TokenNode,
-  'AndNode': AndNode,
-}
-def load_node(state):
-  return kNodeNameToType[state['node_type']](**state)
-
-
 class EmptyNode(Node):
-  def state(self):
-    return {}
   def next(self, ctx):
     return ctx.last
 
@@ -151,11 +123,6 @@ class ListNode(Node):
   def __init__(self, A):
     super().__init__()
     self.A = A
-
-  def state(self):
-    return {
-      'A': self.A,
-    }
 
   def next(self, ctx, x):
     for a in self.A:

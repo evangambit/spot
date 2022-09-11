@@ -6,7 +6,7 @@ import sqlite3
 from functools import lru_cache
 
 from .token_index import TokenIndex
-from .nodes import TokenNode, AndNode, ExpressionContext, OrNode, EmptyNode, load_node
+from .nodes import TokenNode, AndNode, ExpressionContext, EmptyNode
 
 kIntRangePrefix = '#'
 
