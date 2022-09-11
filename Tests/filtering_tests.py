@@ -42,19 +42,17 @@ class IndexTest(unittest.TestCase):
 
     ctx = index.expression_context('age')
     node = index.intersect('foo', 'bar')
-    node.start(ctx)
-    A = []
-    while node.current != ctx.last:
-      A.append(node.current)
-      node.next(ctx)
+    A = [ctx.first]
+    while A[-1] != ctx.last:
+      A.append(node.next(ctx, A[-1]))
+    A = A[1:-1]
     self.assertEqual([a[1] for a in A], [1, 4])
 
     index = spot.Index(conn, 'tmp')
     ctx = index.expression_context('score')
     node = index.intersect('foo', 'bar')
-    node.start(ctx)
-    A = []
-    while node.current != ctx.last:
-      A.append(node.current)
-      node.next(ctx)
+    A = [ctx.first]
+    while A[-1] != ctx.last:
+      A.append(node.next(ctx, A[-1]))
+    A = A[1:-1]
     self.assertEqual([a[1] for a in A], [4, 1])

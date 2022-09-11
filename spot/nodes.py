@@ -1,4 +1,4 @@
-import sqlite3
+import sqlite3, time
 
 from collections import deque
 
@@ -36,16 +36,10 @@ class Node:
   def __init__(self):
     self.current = None
 
-  def state(self):
-    raise NotImplementedError('')
-
-  def start(self, ctx):
+  def next(self, ctx, x):
     """
-    Sets "self.current" to either a real value or ctx.last
+    Return the smallest value that is greater than x
     """
-    raise NotImplementedError('')
-
-  def next(self):
     raise NotImplementedError('')
 
 
@@ -59,52 +53,8 @@ class NotNode(Node):
     )
 
 
-class OrNode(Node):
-  def __init__(self, children, current = None, node_type = 'OrNode'):
-    assert node_type == 'OrNode'
-    assert len(children) > 1
-
-    # Load from json state if necessary
-    if isinstance(children[0][0], dict):
-      children = [(load_node(child[0]), child[1]) for child in children]
-
-    self.children = [child[0] for child in children]
-    self.negated = [child[1] for child in children]
-    self.current = tuple(current) if current is not None else None
-
-    assert sum(self.negated) == 0, 'negation not supported for "OR"'
-
-  def state(self):
-    return {
-      'children': list(zip([child.state() for child in self.children], self.negated)),
-      'current': self.current,
-      'node_type': 'OrNode',
-    }
-
-  def _low(self):
-    return min(child.current for child in self.children)
-
-  def _increment(self, ctx):
-    low = self._low()
-    for child in self.children:
-      if child.current == low:
-        child.next(ctx)
-    return low
-
-  def start(self, ctx):
-    for child in self.children:
-      child.start(ctx)
-    if self.current is not None:
-      return
-    self.current = self._increment(ctx)
-
-  def next(self, ctx):
-    self.current = self._increment(ctx)
-    return self.current
-
-
 class AndNode(Node):
-  def __init__(self, children, current = None, node_type = 'AndNode'):
+  def __init__(self, children, node_type = 'AndNode'):
     assert node_type == 'AndNode'
     assert len(children) > 1
 
@@ -114,108 +64,77 @@ class AndNode(Node):
 
     self.children = [child[0] for child in children]
     self.negated = [child[1] for child in children]
-    self.current = tuple(current) if current is not None else None
 
   def state(self):
     return {
       'children': list(zip([child.state() for child in self.children], self.negated)),
-      'current': self.current,
       'node_type': 'AndNode',
     }
 
-  def _low(self):
-    return min(child.current for child, neg in zip(self.children, self.negated) if not neg)
+  def is_satisfied(self, vals, x):
+    for v, n in zip(vals, self.negated):
+      if n == (v == x):
+        return False
+    return True
 
-  def _increment(self, ctx):
-    changed = False
-    low = self._low()
-    high = None
-    # Find lowest non-negated token and increment it
-    for child, neg in zip(self.children, self.negated):
-      if not neg and child.current == low:
-        child.next(ctx)
-        if high is None or child.current > high:
-          high = child.current
-    # Then increment the other tokens until they're >= to its new value
-    for child in self.children:
-      while child.current < high and child.current != ctx.last:
-        child.next(ctx)
-        changed = True
-    return changed
+  def next(self, ctx, x):
+    vals = [child.next(ctx, x) for child in self.children]
+    x = max(v for (v, n) in zip(vals, self.negated) if not n)
 
-  def _satisfied(self):
-    A = set([c.current for c, n in zip(self.children, self.negated) if not n])
-    B = set([c.current for c, n in zip(self.children, self.negated) if n])
-    if len(A) == 1 and len(A - B) == len(A):
-      return True, list(A)[0]
-    else:
-      return False, None
+    while True:
+      # increment up to x
+      vals = [child.next(ctx, (x[0], x[1] - 1)) for child in self.children]
+      if x == ctx.last or self.is_satisfied(vals, x):
+        return x
 
-  def start(self, ctx):
-    for child in self.children:
-      child.start(ctx)
-    if self.current is not None:
-      return
-    is_satisfied, val = self._satisfied()
-    if is_satisfied:
-      self.current = val
-      self._increment(ctx)
-    else:
-      self.next(ctx)
-
-  def next(self, ctx):
-    if self.current == ctx.last:
-      return self.current
-    satisfied, val = self._satisfied()
-    while not satisfied and self._low() != ctx.last:
-      c = self._increment(ctx)
-      satisfied, val = self._satisfied()
-    self.current = val if val is not None else ctx.last
-    self._increment(ctx)
-    return self.current
+      # increment beyond x
+      vals = [child.next(ctx, x) for child in self.children]
+      x = max(v for (v, n) in zip(vals, self.negated) if not n)
 
 
 class TokenNode(Node):
-  def __init__(self, token : int, current = None, node_type = 'TokenNode'):
+  def __init__(self, token : int, node_type = 'TokenNode'):
     assert node_type == 'TokenNode'
     super().__init__()
     self.token = token
-    self._cache = None
-    self.current = tuple(current) if current is not None else None
+    self._cache = deque()
 
   def state(self):
     return {
       'token': self.token,
-      'current': self.current,
       'node_type': 'TokenNode',
     }
 
-  def start(self, ctx):
-    assert self._cache is None
-    self._cache = deque(maxlen = ctx.pageLength)
-    if self.current is None:
-      self.next(ctx)
-
-  def next(self, ctx):
+  def next(self, ctx, x):
     if len(self._cache) == 0:
       self._cache += ctx.index.docids(
         c = ctx.c,
         token = self.token,
         n = ctx.pageLength,
-        where = self.current if self.current is not None else ctx.first,
+        where = x,
       )
     if len(self._cache) == 0:
-      self.current = ctx.last
-      return self.current
-
-    self.current = self._cache.popleft()
-    return self.current
+      self._cache.append(ctx.last)
+    if self._cache[0] == ctx.last:
+      return ctx.last
+    while self._cache[0] <= x:
+      if len(self._cache) == 1:
+        self._cache += ctx.index.docids(
+          c = ctx.c,
+          token = self.token,
+          n = ctx.pageLength,
+          where = self._cache[0],
+        )
+      self._cache.popleft()
+      if len(self._cache) == 0:
+        self._cache.append(ctx.last)
+        break
+    return self._cache[0]
 
 
 kNodeNameToType = {
   'TokenNode': TokenNode,
   'AndNode': AndNode,
-  'OrNode': OrNode,
 }
 def load_node(state):
   return kNodeNameToType[state['node_type']](**state)
@@ -224,33 +143,22 @@ def load_node(state):
 class EmptyNode(Node):
   def state(self):
     return {}
-  def start(self, ctx):
-    self.current = ctx.last
   def next(self, ctx):
     return ctx.last
 
 
 class ListNode(Node):
-  def __init__(self, A, idx = None):
+  def __init__(self, A):
     super().__init__()
     self.A = A
-    self.idx = idx
 
   def state(self):
     return {
       'A': self.A,
-      'idx': self.idx,
     }
 
-  def start(self, ctx):
-    if self.idx is None:
-      self.idx = 0
-    self.current = self.A[self.idx]
-
-  def next(self, ctx):
-    self.idx += 1
-    if self.idx >= len(self.A):
-      self.current = ctx.last
-      return self.current
-    self.current = self.A[self.idx]
-    return self.current
+  def next(self, ctx, x):
+    for a in self.A:
+      if a > x:
+        return a
+    return ctx.last
