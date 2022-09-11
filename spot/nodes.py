@@ -139,7 +139,7 @@ class TokenNode2(Node):
 
 
 class EmptyNode(Node):
-  def next(self, ctx):
+  def next(self, ctx, x):
     return ctx.last
 
 

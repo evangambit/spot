@@ -150,8 +150,8 @@ class TokenMapper:
 
 
 class Index:
-  @staticmethod
-  def create(conn : sqlite3.Connection, path : str, rankings : [str] = [], force = False):
+  @classmethod
+  def create(cls, conn : sqlite3.Connection, path : str, rankings : [str] = [], force = False):
     ctx = conn.cursor()
     ctx.execute("""
       CREATE TABLE documents (
@@ -174,7 +174,7 @@ class Index:
     with open(os.path.join(path, 'metadata.json'), 'w+') as f:
       json.dump(metadata, f, indent=2)
 
-    return Index(conn, path)
+    return cls(conn, path)
 
   def doc2ranges(self, doc):
     # Subclass this to automatically add ranges based on the document.
