@@ -252,7 +252,7 @@ class Index:
       invert = [False] * len(tags)
 
     token_nodes = []
-    range_tokens = {}
+    range_tokens = []
     for neg, tag in zip(invert, tags):
       if isinstance(tag, str):
         if self.token_mapper.exists(tag, self.ctx):
@@ -271,22 +271,22 @@ class Index:
         T = self.ranges[range_name].less_than(value)
       else:
         T = self.ranges[range_name].greater_than(value)
-      range_tokens[range_name] = []
+      range_tokens.append([])
       for t in T:
         if self.token_mapper.exists(t, self.ctx):
-          range_tokens[range_name].append(self.token_mapper(t, self.ctx))
+          range_tokens[-1].append(self.token_mapper(t, self.ctx))
 
     range_nodes = []
-    for k in range_tokens:
-      T = [(TokenNode(token), False) for token in range_tokens[k]]
-      if len(T) == 0:
+    for tokens in range_tokens:
+      if len(tokens) == 0:
         return EmptyNode()
-      elif len(T) == 1:
+      T = [(TokenNode(token), False) for token in tokens]
+      if len(T) == 1:
         range_nodes.append(T[0][0])
       else:
         range_nodes.append(OrNode(T))
 
-    all_nodes = token_nodes + [ (node, False) for node in range_nodes.values() ]
+    all_nodes = token_nodes + [ (node, False) for node in range_nodes ]
 
     if sum(x[1] for x in all_nodes) == len(all_nodes):
       # all nodes are inverted
