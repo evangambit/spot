@@ -6,7 +6,7 @@ import sqlite3
 from functools import lru_cache
 
 from .token_index import TokenIndex
-from .nodes import TokenNode, AndNode, ExpressionContext, EmptyNode
+from .nodes import TokenNode, AndNode, OrNode, ExpressionContext, EmptyNode
 
 kIntRangePrefix = '#'
 
@@ -276,15 +276,15 @@ class Index:
         if self.token_mapper.exists(t, self.ctx):
           range_tokens[range_name].append(self.token_mapper(t, self.ctx))
 
-    range_nodes = {}
+    range_nodes = []
     for k in range_tokens:
       T = [(TokenNode(token), False) for token in range_tokens[k]]
       if len(T) == 0:
         return EmptyNode()
       elif len(T) == 1:
-        range_nodes[k] = T[0][0]
+        range_nodes.append(T[0][0])
       else:
-        range_nodes[k] = OrNode(T)
+        range_nodes.append(OrNode(T))
 
     all_nodes = token_nodes + [ (node, False) for node in range_nodes.values() ]
 
