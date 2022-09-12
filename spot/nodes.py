@@ -77,6 +77,17 @@ class AndNode(Node):
       x = max(v for (v, n) in zip(vals, self.negated) if not n)
 
 
+class OrNode(Node):
+  def __init__(self, children):
+    assert len(children) > 1
+    self.children = [child[0] for child in children]
+    self.negated = [child[1] for child in children]
+    assert sum(self.negated) == 0
+
+  def next(self, ctx, x):
+    return min([child.next(ctx, x) for child in self.children])
+
+
 class TokenNode(Node):
   """
   A token node that iterates over all docids. This is appropriate for Or-based
