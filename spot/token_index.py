@@ -14,7 +14,8 @@ class TokenIndex:
     c.execute(f"""CREATE TABLE tokens_{name} (
       rank REAL,
       doc_id INTEGER,
-      token INTEGER
+      token INTEGER,
+      PRIMARY KEY (token, rank, doc_id)
     )""")
     index = TokenIndex(name)
     return index
@@ -22,9 +23,6 @@ class TokenIndex:
   def json(self):
     return { "name": self.name }
   
-  def create_indices(self, c):
-    c.execute(f"CREATE INDEX {self.tableName}_index ON {self.tableName}(token, rank, doc_id)")
-
   def __init__(self, name : str):
     self.name = name
     self.tableName = f"tokens_{name}"

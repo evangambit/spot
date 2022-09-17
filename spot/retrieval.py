@@ -180,10 +180,6 @@ class Index:
     self.ctx.execute("SELECT data FROM documents WHERE rowid = ?", (docid,))
     return json.loads(self.ctx.fetchone()[0])
 
-  def create_indices(self):
-    for token_index in self.token_indices:
-      token_index.create_indices(self.ctx)
-
   def intersect(self, *tags, invert=None):
     if invert is not None:
       assert isinstance(invert, list) or isinstance(invert, tuple)
